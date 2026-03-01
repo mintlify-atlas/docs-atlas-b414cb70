@@ -1,0 +1,157 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "ZK ElGamal Proof SDK",
+  "projectDescription": "Zero-knowledge proof SDK for ElGamal encryption and Pedersen commitments on Solana",
+  "theme": "aspen",
+  "primaryColor": "#14F195",
+  "lightColor": "#80F8C7",
+  "darkColor": "#00D179",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/overview",
+              "concepts/elgamal-encryption",
+              "concepts/pedersen-commitments",
+              "concepts/zero-knowledge-proofs"
+            ]
+          },
+          {
+            "group": "Proof Types",
+            "pages": [
+              "proofs/zero-ciphertext",
+              "proofs/ciphertext-ciphertext-equality",
+              "proofs/ciphertext-commitment-equality",
+              "proofs/pubkey-validity",
+              "proofs/grouped-ciphertext-validity",
+              "proofs/batched-grouped-ciphertext-validity",
+              "proofs/range-proofs",
+              "proofs/percentage-with-cap"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/rust-usage",
+              "examples/javascript-usage",
+              "examples/wasm-integration"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Rust SDK",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "rust/overview",
+              "rust/encryption",
+              "rust/proof-data",
+              "rust/instructions",
+              "rust/state"
+            ]
+          },
+          {
+            "group": "Modules",
+            "pages": [
+              "rust/modules/elgamal",
+              "rust/modules/pedersen",
+              "rust/modules/grouped-elgamal",
+              "rust/modules/auth-encryption",
+              "rust/modules/discrete-log"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "JavaScript SDK",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "javascript/overview",
+              "javascript/installation",
+              "javascript/instructions"
+            ]
+          },
+          {
+            "group": "Actions",
+            "pages": [
+              "javascript/actions/verify-zero-ciphertext",
+              "javascript/actions/verify-ciphertext-equality",
+              "javascript/actions/verify-pubkey-validity",
+              "javascript/actions/verify-range-proofs",
+              "javascript/actions/close-context"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tools",
+        "groups": [
+          {
+            "group": "CLI Tools",
+            "pages": [
+              "tools/zk-keygen",
+              "tools/key-management"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "ElGamal encryption with Curve25519",
+    "Pedersen commitments for privacy-preserving values",
+    "Zero-knowledge proof generation and verification",
+    "Range proofs for encrypted values",
+    "Batched proof verification for efficiency",
+    "Rust and JavaScript/TypeScript SDK support",
+    "WASM support for browser and Node.js",
+    "Native Solana program integration"
+  ],
+  "publicApiSurface": [
+    "ElGamalKeypair",
+    "ElGamalCiphertext",
+    "PedersenCommitment",
+    "ZeroCiphertextProofData",
+    "CiphertextCiphertextEqualityProofData",
+    "CiphertextCommitmentEqualityProofData",
+    "PubkeyValidityProofData",
+    "GroupedCiphertext2HandlesValidityProofData",
+    "GroupedCiphertext3HandlesValidityProofData",
+    "BatchedGroupedCiphertext2HandlesValidityProofData",
+    "BatchedGroupedCiphertext3HandlesValidityProofData",
+    "BatchedRangeProofU64Data",
+    "BatchedRangeProofU128Data",
+    "BatchedRangeProofU256Data",
+    "PercentageWithCapProofData",
+    "ProofInstruction",
+    "verifyZeroCiphertext",
+    "verifyCiphertextCiphertextEquality",
+    "verifyCiphertextCommitmentEquality",
+    "verifyPubkeyValidity",
+    "verifyGroupedCiphertext2HandlesValidity",
+    "verifyGroupedCiphertext3HandlesValidity",
+    "verifyBatchedGroupedCiphertext2HandlesValidity",
+    "verifyBatchedGroupedCiphertext3HandlesValidity",
+    "verifyBatchedRangeProofU64",
+    "verifyBatchedRangeProofU128",
+    "verifyBatchedRangeProofU256",
+    "verifyPercentageWithCap",
+    "close"
+  ]
+}
