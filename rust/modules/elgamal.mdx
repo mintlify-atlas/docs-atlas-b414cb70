@@ -1,0 +1,381 @@
+---
+title: "ElGamal Encryption"
+description: "Twisted ElGamal encryption scheme implementation for Curve25519"
+---
+
+## Overview
+
+The twisted ElGamal encryption module provides a homomorphic encryption scheme built on Curve25519. Unlike traditional ElGamal, this implementation encrypts messages directly as Pedersen commitments, enabling compatibility with zero-knowledge proof systems designed for Pedersen commitments.
+
+## Key Concepts
+
+### Message Encoding
+
+Messages are encrypted as scalar elements (in the "exponent"), which means decryption requires solving the discrete logarithm problem. This design choice enables homomorphic properties while maintaining compatibility with proof systems.
+
+### Ciphertext Structure
+
+A twisted ElGamal ciphertext consists of two components:
+- **Pedersen Commitment**: Encodes the encrypted message
+- **Decryption Handle**: Binds the Pedersen opening to a specific public key
+
+## Core Types
+
+### ElGamalKeypair
+
+A keypair containing both public and secret keys for ElGamal encryption.
+
+```rust
+pub struct ElGamalKeypair {
+    public: ElGamalPubkey,
+    secret: ElGamalSecretKey,
+}
+```
+
+#### Methods
+
+**Creating Keypairs**
+
+```rust
+// Generate a random keypair
+pub fn new_rand() -> Self
+
+// Create keypair from a secret key
+pub fn new(secret: ElGamalSecretKey) -> Self
+
+// Derive keypair from a Solana signer
+pub fn new_from_signer(
+    signer: &dyn Signer,
+    public_seed: &[u8],
+) -> Result<Self, Box<dyn error::Error>>
+
+// Derive keypair from a signature
+pub fn new_from_signature(signature: &Signature) -> Result<Self, Box<dyn error::Error>>
+```
+
+**Accessing Keys**
+
+```rust
+pub fn pubkey(&self) -> &ElGamalPubkey
+pub fn secret(&self) -> &ElGamalSecretKey
+```
+
+**Serialization**
+
+```rust
+// Read/write JSON-encoded keypairs
+pub fn read_json_file<F: AsRef<Path>>(path: F) -> Result<Self, Box<dyn error::Error>>
+pub fn write_json_file<F: AsRef<Path>>(&self, outfile: F) -> Result<String, Box<dyn error::Error>>
+```
+
+### ElGamalPubkey
+
+Public key for ElGamal encryption.
+
+```rust
+pub struct ElGamalPubkey(RistrettoPoint)
+```
+
+#### Methods
+
+```rust
+// Derives public key from secret key
+pub fn new(secret: &ElGamalSecretKey) -> Self
+
+// Encrypt an amount (randomized)
+pub fn encrypt<T: Into<Scalar>>(&self, amount: T) -> ElGamalCiphertext
+
+// Encrypt with specified opening (deterministic)
+pub fn encrypt_with<T: Into<Scalar>>(
+    &self,
+    amount: T,
+    opening: &PedersenOpening,
+) -> ElGamalCiphertext
+
+// Generate decrypt handle
+pub fn decrypt_handle(self, opening: &PedersenOpening) -> DecryptHandle
+
+// Convert to bytes
+pub fn to_bytes(&self) -> [u8; ELGAMAL_PUBKEY_LEN]
+```
+
+### ElGamalSecretKey
+
+Secret key for ElGamal decryption. Instances are zeroized on drop.
+
+```rust
+pub struct ElGamalSecretKey(Scalar)
+```
+
+#### Methods
+
+```rust
+// Generate random secret key
+pub fn new_rand() -> Self
+
+// Derive from entropy seed
+pub fn from_seed(seed: &[u8]) -> Result<Self, ElGamalError>
+
+// Derive from Solana signer
+pub fn new_from_signer(
+    signer: &dyn Signer,
+    public_seed: &[u8],
+) -> Result<Self, Box<dyn error::Error>>
+
+// Decrypt ciphertext (returns DiscreteLog)
+pub fn decrypt(&self, ciphertext: &ElGamalCiphertext) -> DiscreteLog
+
+// Decrypt as u32 (not constant-time)
+pub fn decrypt_u32(&self, ciphertext: &ElGamalCiphertext) -> Option<u64>
+
+// Access underlying scalar
+pub fn get_scalar(&self) -> &Scalar
+pub fn as_bytes(&self) -> &[u8; ELGAMAL_SECRET_KEY_LEN]
+```
+
+### ElGamalCiphertext
+
+An ElGamal ciphertext containing a commitment and decrypt handle.
+
+```rust
+pub struct ElGamalCiphertext {
+    pub commitment: PedersenCommitment,
+    pub handle: DecryptHandle,
+}
+```
+
+#### Methods
+
+```rust
+// Homomorphic operations
+pub fn add_amount<T: Into<Scalar>>(&self, amount: T) -> Self
+pub fn subtract_amount<T: Into<Scalar>>(&self, amount: T) -> Self
+
+// Decryption
+pub fn decrypt(&self, secret: &ElGamalSecretKey) -> DiscreteLog
+pub fn decrypt_u32(&self, secret: &ElGamalSecretKey) -> Option<u64>
+
+// Serialization
+pub fn to_bytes(&self) -> [u8; ELGAMAL_CIPHERTEXT_LEN]
+pub fn from_bytes(bytes: &[u8]) -> Option<ElGamalCiphertext>
+```
+
+#### Operator Overloading
+
+ElGamalCiphertext supports arithmetic operations:
+
+```rust
+// Addition of ciphertexts
+let sum = &ciphertext1 + &ciphertext2;
+
+// Subtraction of ciphertexts
+let diff = &ciphertext1 - &ciphertext2;
+
+// Scalar multiplication
+let scaled = &ciphertext * &scalar;
+let scaled = &scalar * &ciphertext;
+```
+
+### DecryptHandle
+
+Binds a Pedersen opening to a specific public key.
+
+```rust
+pub struct DecryptHandle(RistrettoPoint)
+```
+
+#### Methods
+
+```rust
+pub fn new(public: &ElGamalPubkey, opening: &PedersenOpening) -> Self
+pub fn get_point(&self) -> &RistrettoPoint
+pub fn to_bytes(&self) -> [u8; DECRYPT_HANDLE_LEN]
+pub fn from_bytes(bytes: &[u8]) -> Option<DecryptHandle>
+```
+
+## Usage Examples
+
+### Basic Encryption and Decryption
+
+```rust
+use solana_zk_sdk::encryption::elgamal::{ElGamalKeypair, ElGamal};
+
+// Generate a keypair
+let keypair = ElGamalKeypair::new_rand();
+let public = keypair.pubkey();
+let secret = keypair.secret();
+
+// Encrypt an amount
+let amount: u32 = 57;
+let ciphertext = public.encrypt(amount);
+
+// Decrypt the ciphertext
+let decrypted = secret.decrypt_u32(&ciphertext).unwrap();
+assert_eq!(57, decrypted);
+```
+
+### Deterministic Encryption
+
+```rust
+use solana_zk_sdk::encryption::{
+    elgamal::ElGamalKeypair,
+    pedersen::PedersenOpening,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let amount: u64 = 100;
+
+// Use a specific opening for deterministic encryption
+let opening = PedersenOpening::new_rand();
+let ciphertext = keypair.pubkey().encrypt_with(amount, &opening);
+
+// The same amount with same opening produces same ciphertext
+let ciphertext2 = keypair.pubkey().encrypt_with(amount, &opening);
+assert_eq!(ciphertext, ciphertext2);
+```
+
+### Homomorphic Addition
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+let keypair = ElGamalKeypair::new_rand();
+let amount_0: u64 = 57;
+let amount_1: u64 = 77;
+
+// Encrypt two amounts
+let ciphertext_0 = keypair.pubkey().encrypt(amount_0);
+let ciphertext_1 = keypair.pubkey().encrypt(amount_1);
+
+// Add ciphertexts homomorphically
+let ciphertext_sum = &ciphertext_0 + &ciphertext_1;
+
+// Decrypt the sum
+let decrypted = keypair.secret().decrypt_u32(&ciphertext_sum).unwrap();
+assert_eq!(amount_0 + amount_1, decrypted);
+```
+
+### Homomorphic Subtraction
+
+```rust
+let keypair = ElGamalKeypair::new_rand();
+let amount_0: u64 = 77;
+let amount_1: u64 = 55;
+
+let ciphertext_0 = keypair.pubkey().encrypt(amount_0);
+let ciphertext_1 = keypair.pubkey().encrypt(amount_1);
+
+// Subtract ciphertexts
+let ciphertext_diff = &ciphertext_0 - &ciphertext_1;
+
+let decrypted = keypair.secret().decrypt_u32(&ciphertext_diff).unwrap();
+assert_eq!(amount_0 - amount_1, decrypted);
+```
+
+### Scalar Multiplication
+
+```rust
+use curve25519_dalek::scalar::Scalar;
+
+let keypair = ElGamalKeypair::new_rand();
+let amount_0: u64 = 57;
+let amount_1: u64 = 77;
+
+let ciphertext = keypair.pubkey().encrypt(amount_0);
+let scalar = Scalar::from(amount_1);
+
+// Multiply ciphertext by scalar
+let ciphertext_prod = &ciphertext * &scalar;
+
+let decrypted = keypair.secret().decrypt_u32(&ciphertext_prod).unwrap();
+assert_eq!(amount_0 * amount_1, decrypted);
+```
+
+### Deriving Keys from Solana Signer
+
+```rust
+use solana_keypair::Keypair;
+use solana_address::Address;
+
+let solana_keypair = Keypair::new();
+let public_seed = Address::default();
+
+// Derive ElGamal keypair from Solana keypair
+let elgamal_keypair = ElGamalKeypair::new_from_signer(
+    &solana_keypair,
+    public_seed.as_ref(),
+).unwrap();
+
+// Use the derived keypair
+let ciphertext = elgamal_keypair.pubkey().encrypt(100_u64);
+```
+
+### Working with Decrypt Handles
+
+```rust
+use solana_zk_sdk::encryption::{
+    elgamal::{ElGamalKeypair, ElGamalCiphertext},
+    pedersen::Pedersen,
+};
+
+let keypair_0 = ElGamalKeypair::new_rand();
+let keypair_1 = ElGamalKeypair::new_rand();
+
+let amount: u32 = 77;
+let (commitment, opening) = Pedersen::new(amount);
+
+// Create decrypt handles for different keys
+let handle_0 = keypair_0.pubkey().decrypt_handle(&opening);
+let handle_1 = keypair_1.pubkey().decrypt_handle(&opening);
+
+// Create ciphertexts with same commitment but different handles
+let ciphertext_0 = ElGamalCiphertext {
+    commitment,
+    handle: handle_0,
+};
+let ciphertext_1 = ElGamalCiphertext {
+    commitment,
+    handle: handle_1,
+};
+
+// Both keys can decrypt their respective ciphertexts
+assert_eq!(77, keypair_0.secret().decrypt_u32(&ciphertext_0).unwrap());
+assert_eq!(77, keypair_1.secret().decrypt_u32(&ciphertext_1).unwrap());
+```
+
+## Security Considerations
+
+### Constant-Time Operations
+
+The `decrypt_u32` method is **not constant-time** and may leak information through timing side channels. Use with caution in security-sensitive contexts.
+
+### Key Management
+
+- Secret keys are automatically zeroized on drop
+- Never expose secret keys or serialize them insecurely
+- Use proper key derivation when deriving from Solana signers
+
+### Discrete Log Limitations
+
+Decryption requires solving the discrete log problem, which limits the practical range of encrypted values to 32-bit unsigned integers. Larger values cannot be efficiently decrypted.
+
+## Algorithm Handle
+
+The `ElGamal` struct provides low-level algorithm operations:
+
+```rust
+pub struct ElGamal;
+
+impl ElGamal {
+    fn encrypt<T: Into<Scalar>>(public: &ElGamalPubkey, amount: T) -> ElGamalCiphertext;
+    fn encrypt_with<T: Into<Scalar>>(
+        amount: T,
+        public: &ElGamalPubkey,
+        opening: &PedersenOpening,
+    ) -> ElGamalCiphertext;
+    fn decrypt(secret: &ElGamalSecretKey, ciphertext: &ElGamalCiphertext) -> DiscreteLog;
+    fn decrypt_u32(secret: &ElGamalSecretKey, ciphertext: &ElGamalCiphertext) -> Option<u64>;
+}
+```
+
+Most users should use the methods on `ElGamalPubkey` and `ElGamalSecretKey` instead of calling these directly.

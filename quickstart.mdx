@@ -1,80 +1,672 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Get started with the ZK ElGamal Proof SDK - create your first keypair and zero-knowledge proof"
 ---
 
-## Get started in three steps
+## Overview
 
-Get your documentation site running locally and make your first customization.
+This guide walks you through the basic operations of the ZK ElGamal Proof SDK:
+- Generating ElGamal keypairs
+- Encrypting and decrypting data
+- Creating zero-knowledge proofs
+- Verifying proofs
 
-### Step 1: Set up your local environment
+By the end, you'll have created and verified your first public key validity proof.
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
+## Basic Usage
+
+<Tabs>
+  <Tab title="Rust">
+
+### Generate a Keypair
+
+First, let's create an ElGamal keypair for encryption:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+fn main() {
+    // Generate a random ElGamal keypair
+    let keypair = ElGamalKeypair::new_rand();
     
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
+    // Access the public and secret keys
+    let public_key = keypair.pubkey();
+    let secret_key = keypair.secret();
     
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    println!("Keypair generated successfully!");
+}
+```
 
-### Step 2: Deploy your changes
+### Encrypt and Decrypt Data
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
+Now let's encrypt a value and decrypt it:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+fn main() {
+    let keypair = ElGamalKeypair::new_rand();
+    let public_key = keypair.pubkey();
     
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+    // Encrypt a 64-bit value
+    let amount = 42_u64;
+    let ciphertext = public_key.encrypt(amount);
+    println!("Encrypted value: {}", amount);
+    
+    // Decrypt using the secret key
+    let decrypted = keypair.secret().decrypt_u32(&ciphertext);
+    
+    match decrypted {
+        Some(value) => println!("Decrypted value: {}", value),
+        None => println!("Decryption failed"),
+    }
+}
+```
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  The `decrypt_u32()` method returns `Option<u64>` because decryption requires solving the discrete logarithm problem. It works efficiently for small values but may fail or take time for large values.
 </Note>
+
+### Create a Zero-Knowledge Proof
+
+Let's create a public key validity proof to prove we know the secret key:
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::proof_data::{
+        pubkey_validity::PubkeyValidityProofData,
+        ZkProofData,
+    },
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Generate keypair
+    let keypair = ElGamalKeypair::new_rand();
+    
+    // Create a public key validity proof
+    let proof_data = PubkeyValidityProofData::new(&keypair)?;
+    
+    // Verify the proof
+    proof_data.verify_proof()?;
+    
+    println!("✅ Public key validity proof created and verified!");
+    Ok(())
+}
+```
+
+  </Tab>
+
+  <Tab title="JavaScript (Node.js)">
+
+### Generate a Keypair
+
+First, let's create an ElGamal keypair for encryption:
+
+```javascript
+const { ElGamalKeypair } = require('@solana/zk-sdk/node');
+
+// Generate a random ElGamal keypair
+const keypair = new ElGamalKeypair();
+
+// Access the public and secret keys
+const publicKey = keypair.pubkey();
+const secretKey = keypair.secretKey();
+
+console.log('Keypair generated successfully!');
+```
+
+### Encrypt and Decrypt Data
+
+Now let's encrypt a value and decrypt it:
+
+```javascript
+const { ElGamalKeypair } = require('@solana/zk-sdk/node');
+
+const keypair = new ElGamalKeypair();
+const publicKey = keypair.pubkey();
+
+// Encrypt a 64-bit value
+const amount = 42;
+const ciphertext = publicKey.encryptU64(amount);
+console.log(`Encrypted value: ${amount}`);
+
+// Decrypt using the secret key
+try {
+  const decrypted = keypair.secretKey().decrypt(ciphertext);
+  console.log(`Decrypted value: ${decrypted}`);
+} catch (error) {
+  console.error('Decryption failed:', error.message);
+}
+```
+
+<Note>
+  The `decrypt()` method throws an error if decryption fails. This can happen if the encrypted value is too large or the secret key is incorrect.
+</Note>
+
+### Create a Zero-Knowledge Proof
+
+Let's create a public key validity proof to prove we know the secret key:
+
+```javascript
+const {
+  ElGamalKeypair,
+  PubkeyValidityProofData,
+} = require('@solana/zk-sdk/node');
+
+try {
+  // Generate keypair
+  const keypair = new ElGamalKeypair();
+  
+  // Create a public key validity proof
+  const proof = new PubkeyValidityProofData(keypair);
+  
+  // Verify the proof
+  proof.verify();
+  
+  console.log('✅ Public key validity proof created and verified!');
+} catch (error) {
+  console.error('❌ Proof creation or verification failed:', error.message);
+}
+```
+
+  </Tab>
+
+  <Tab title="JavaScript (Web)">
+
+### Generate a Keypair
+
+For web environments, you need to initialize the WASM module first:
+
+```javascript
+import init, { ElGamalKeypair } from '@solana/zk-sdk/web';
+
+async function run() {
+  // Initialize WASM module (required for web)
+  await init();
+  
+  // Generate a random ElGamal keypair
+  const keypair = new ElGamalKeypair();
+  
+  // Access the public and secret keys
+  const publicKey = keypair.pubkey();
+  const secretKey = keypair.secretKey();
+  
+  console.log('Keypair generated successfully!');
+}
+
+run();
+```
+
+<Warning>
+  Always call `await init()` before using any SDK functions in web environments. Failing to do so will result in runtime errors.
+</Warning>
+
+### Encrypt and Decrypt Data
+
+```javascript
+import init, { ElGamalKeypair } from '@solana/zk-sdk/web';
+
+async function run() {
+  await init();
+  
+  const keypair = new ElGamalKeypair();
+  const publicKey = keypair.pubkey();
+  
+  // Encrypt a 64-bit value
+  const amount = 42;
+  const ciphertext = publicKey.encryptU64(amount);
+  console.log(`Encrypted value: ${amount}`);
+  
+  // Decrypt using the secret key
+  try {
+    const decrypted = keypair.secretKey().decrypt(ciphertext);
+    console.log(`Decrypted value: ${decrypted}`);
+  } catch (error) {
+    console.error('Decryption failed:', error.message);
+  }
+}
+
+run();
+```
+
+### Create a Zero-Knowledge Proof
+
+```javascript
+import init, {
+  ElGamalKeypair,
+  PubkeyValidityProofData,
+} from '@solana/zk-sdk/web';
+
+async function run() {
+  try {
+    // Initialize WASM
+    await init();
+    
+    // Generate keypair
+    const keypair = new ElGamalKeypair();
+    
+    // Create a public key validity proof
+    const proof = new PubkeyValidityProofData(keypair);
+    
+    // Verify the proof
+    proof.verify();
+    
+    console.log('✅ Public key validity proof created and verified!');
+  } catch (error) {
+    console.error('❌ Proof creation or verification failed:', error.message);
+  }
+}
+
+run();
+```
+
+  </Tab>
+</Tabs>
+
+## Complete Example
+
+Here's a complete example demonstrating the full workflow:
+
+<CodeGroup>
+
+```rust Rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::proof_data::{
+        pubkey_validity::PubkeyValidityProofData,
+        ZkProofData,
+    },
+};
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    println!("=== ZK ElGamal Proof SDK Quickstart ===");
+    
+    // Step 1: Generate keypair
+    println!("\n1. Generating ElGamal keypair...");
+    let keypair = ElGamalKeypair::new_rand();
+    let public_key = keypair.pubkey();
+    println!("   ✓ Keypair generated");
+    
+    // Step 2: Encrypt data
+    println!("\n2. Encrypting value...");
+    let amount = 100_u64;
+    let ciphertext = public_key.encrypt(amount);
+    println!("   ✓ Encrypted: {}", amount);
+    
+    // Step 3: Decrypt data
+    println!("\n3. Decrypting value...");
+    let decrypted = keypair.secret()
+        .decrypt_u32(&ciphertext)
+        .expect("Decryption failed");
+    println!("   ✓ Decrypted: {}", decrypted);
+    assert_eq!(amount, decrypted);
+    
+    // Step 4: Create zero-knowledge proof
+    println!("\n4. Creating public key validity proof...");
+    let proof_data = PubkeyValidityProofData::new(&keypair)?;
+    println!("   ✓ Proof created");
+    
+    // Step 5: Verify proof
+    println!("\n5. Verifying proof...");
+    proof_data.verify_proof()?;
+    println!("   ✓ Proof verified!");
+    
+    println!("\n✅ All steps completed successfully!");
+    Ok(())
+}
+```
+
+```javascript Node.js
+const {
+  ElGamalKeypair,
+  PubkeyValidityProofData,
+} = require('@solana/zk-sdk/node');
+
+console.log('=== ZK ElGamal Proof SDK Quickstart ===');
+
+try {
+  // Step 1: Generate keypair
+  console.log('\n1. Generating ElGamal keypair...');
+  const keypair = new ElGamalKeypair();
+  const publicKey = keypair.pubkey();
+  console.log('   ✓ Keypair generated');
+  
+  // Step 2: Encrypt data
+  console.log('\n2. Encrypting value...');
+  const amount = 100;
+  const ciphertext = publicKey.encryptU64(amount);
+  console.log(`   ✓ Encrypted: ${amount}`);
+  
+  // Step 3: Decrypt data
+  console.log('\n3. Decrypting value...');
+  const decrypted = keypair.secretKey().decrypt(ciphertext);
+  console.log(`   ✓ Decrypted: ${decrypted}`);
+  
+  if (amount !== decrypted) {
+    throw new Error('Decryption mismatch!');
+  }
+  
+  // Step 4: Create zero-knowledge proof
+  console.log('\n4. Creating public key validity proof...');
+  const proof = new PubkeyValidityProofData(keypair);
+  console.log('   ✓ Proof created');
+  
+  // Step 5: Verify proof
+  console.log('\n5. Verifying proof...');
+  proof.verify();
+  console.log('   ✓ Proof verified!');
+  
+  console.log('\n✅ All steps completed successfully!');
+} catch (error) {
+  console.error('\n❌ Error:', error.message);
+  process.exit(1);
+}
+```
+
+```javascript Web
+import init, {
+  ElGamalKeypair,
+  PubkeyValidityProofData,
+} from '@solana/zk-sdk/web';
+
+async function quickstart() {
+  console.log('=== ZK ElGamal Proof SDK Quickstart ===');
+  
+  try {
+    // Initialize WASM module
+    console.log('\n0. Initializing WASM module...');
+    await init();
+    console.log('   ✓ WASM initialized');
+    
+    // Step 1: Generate keypair
+    console.log('\n1. Generating ElGamal keypair...');
+    const keypair = new ElGamalKeypair();
+    const publicKey = keypair.pubkey();
+    console.log('   ✓ Keypair generated');
+    
+    // Step 2: Encrypt data
+    console.log('\n2. Encrypting value...');
+    const amount = 100;
+    const ciphertext = publicKey.encryptU64(amount);
+    console.log(`   ✓ Encrypted: ${amount}`);
+    
+    // Step 3: Decrypt data
+    console.log('\n3. Decrypting value...');
+    const decrypted = keypair.secretKey().decrypt(ciphertext);
+    console.log(`   ✓ Decrypted: ${decrypted}`);
+    
+    if (amount !== decrypted) {
+      throw new Error('Decryption mismatch!');
+    }
+    
+    // Step 4: Create zero-knowledge proof
+    console.log('\n4. Creating public key validity proof...');
+    const proof = new PubkeyValidityProofData(keypair);
+    console.log('   ✓ Proof created');
+    
+    // Step 5: Verify proof
+    console.log('\n5. Verifying proof...');
+    proof.verify();
+    console.log('   ✓ Proof verified!');
+    
+    console.log('\n✅ All steps completed successfully!');
+  } catch (error) {
+    console.error('\n❌ Error:', error.message);
+  }
+}
+
+quickstart();
+```
+
+</CodeGroup>
+
+## Working with Keys
+
+### Serialize and Deserialize Keys
+
+<Tabs>
+  <Tab title="Rust">
+
+```rust
+use solana_zk_sdk::encryption::elgamal::{ElGamalKeypair, ElGamalSecretKey, ElGamalPubkey};
+
+// Serialize public key to bytes
+let keypair = ElGamalKeypair::new_rand();
+let pubkey_bytes: [u8; 32] = keypair.pubkey().into();
+
+// Deserialize public key from bytes
+let recovered_pubkey = ElGamalPubkey::try_from(pubkey_bytes.as_ref())
+    .expect("Invalid public key bytes");
+
+// Serialize secret key
+let secret_bytes = keypair.secret().as_bytes();
+
+// Deserialize secret key
+let recovered_secret = ElGamalSecretKey::try_from(secret_bytes.as_ref())
+    .expect("Invalid secret key bytes");
+```
+
+  </Tab>
+
+  <Tab title="JavaScript">
+
+```javascript
+const { ElGamalKeypair } = require('@solana/zk-sdk/node');
+
+const keypair = new ElGamalKeypair();
+
+// Serialize public key to bytes
+const pubkeyBytes = keypair.pubkey().toBytes();
+console.log('Public key bytes:', pubkeyBytes);
+
+// Deserialize public key from bytes
+const { ElGamalPubkey } = require('@solana/zk-sdk/node');
+const recoveredPubkey = ElGamalPubkey.fromBytes(new Uint8Array(pubkeyBytes));
+
+// Serialize secret key to bytes
+const secretBytes = keypair.secretKey().toBytes();
+
+// Deserialize secret key from bytes
+const { ElGamalSecretKey } = require('@solana/zk-sdk/node');
+const recoveredSecret = ElGamalSecretKey.fromBytes(new Uint8Array(secretBytes));
+```
+
+  </Tab>
+</Tabs>
+
+### Encrypt with Custom Opening
+
+For advanced use cases, you can provide your own Pedersen opening:
+
+<Tabs>
+  <Tab title="Rust">
+
+```rust
+use solana_zk_sdk::encryption::{
+    elgamal::ElGamalKeypair,
+    pedersen::PedersenOpening,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let opening = PedersenOpening::new_rand();
+
+// Encrypt with a specific opening
+let amount = 50_u64;
+let ciphertext = keypair.pubkey().encrypt_with(amount, &opening);
+```
+
+  </Tab>
+
+  <Tab title="JavaScript">
+
+```javascript
+const { ElGamalKeypair, PedersenOpening } = require('@solana/zk-sdk/node');
+
+const keypair = new ElGamalKeypair();
+const opening = new PedersenOpening();
+
+// Encrypt with a specific opening
+const amount = 50;
+const ciphertext = keypair.pubkey().encryptWith(amount, opening);
+```
+
+  </Tab>
+</Tabs>
+
+## Understanding Proofs
+
+### Public Key Validity Proof
+
+A public key validity proof proves that you know the secret key corresponding to a public key without revealing the secret key itself.
+
+**What it proves**: "I know the discrete logarithm (secret key) of this public key."
+
+**Use cases**:
+- Proving ownership of an ElGamal public key
+- Authenticating without revealing credentials
+- Establishing trust in encrypted communications
+
+### Proof Context and Verification
+
+<Tabs>
+  <Tab title="Rust">
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::proof_data::{
+        pubkey_validity::PubkeyValidityProofData,
+        ZkProofData,
+    },
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let proof_data = PubkeyValidityProofData::new(&keypair)
+    .expect("Failed to create proof");
+
+// Access the proof context (contains the public key)
+let context = &proof_data.context;
+println!("Pubkey from context: {:?}", context.pubkey);
+
+// Verify the proof
+match proof_data.verify_proof() {
+    Ok(()) => println!("✅ Proof is valid"),
+    Err(e) => println!("❌ Proof is invalid: {}", e),
+}
+```
+
+  </Tab>
+
+  <Tab title="JavaScript">
+
+```javascript
+const { ElGamalKeypair, PubkeyValidityProofData } = require('@solana/zk-sdk/node');
+
+const keypair = new ElGamalKeypair();
+const proof = new PubkeyValidityProofData(keypair);
+
+// Access the proof context (contains the public key)
+const context = proof.context();
+const contextBytes = context.toBytes();
+console.log('Context bytes:', contextBytes);
+
+// Verify the proof
+try {
+  proof.verify();
+  console.log('✅ Proof is valid');
+} catch (error) {
+  console.error('❌ Proof is invalid:', error.message);
+}
+```
+
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Core Concepts" icon="book" href="/concepts/overview">
+    Understand the cryptographic foundations of ElGamal encryption and zero-knowledge proofs.
+  </Card>
+  <Card title="Proof Types" icon="shield" href="/proofs/zero-ciphertext">
+    Learn about range proofs, equality proofs, and batched proof systems.
+  </Card>
+  <Card title="Rust SDK" icon="code" href="/rust/overview">
+    Explore the complete Rust API documentation for all cryptographic primitives.
+  </Card>
+  <Card title="JavaScript SDK" icon="code" href="/javascript/overview">
+    Browse JavaScript/TypeScript examples and integration patterns.
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+<AccordionGroup>
+  <Accordion title="Encrypting Multiple Values">
+    When encrypting multiple values with the same public key:
+
+    ```rust
+    let keypair = ElGamalKeypair::new_rand();
+    let pubkey = keypair.pubkey();
+    
+    let values = vec![10_u64, 20, 30, 40, 50];
+    let ciphertexts: Vec<_> = values
+        .iter()
+        .map(|&v| pubkey.encrypt(v))
+        .collect();
+    
+    // Each ciphertext uses a different random opening
+    ```
+  </Accordion>
+
+  <Accordion title="Serializing Proofs for Storage">
+    Proofs can be serialized and stored for later verification:
+
+    **Rust**:
+    ```rust
+    use bytemuck;
+    
+    let proof_data = PubkeyValidityProofData::new(&keypair)?;
+    let proof_bytes = bytemuck::bytes_of(&proof_data);
+    
+    // Later: deserialize
+    let recovered: &PubkeyValidityProofData = bytemuck::from_bytes(proof_bytes);
+    ```
+
+    **JavaScript**:
+    ```javascript
+    const proof = new PubkeyValidityProofData(keypair);
+    const proofBytes = proof.toBytes();
+    
+    // Later: deserialize
+    const recovered = PubkeyValidityProofData.fromBytes(new Uint8Array(proofBytes));
+    ```
+  </Accordion>
+
+  <Accordion title="Error Handling Best Practices">
+    Always handle cryptographic errors gracefully:
+
+    **Rust**:
+    ```rust
+    match keypair.secret().decrypt_u32(&ciphertext) {
+        Some(value) => println!("Decrypted: {}", value),
+        None => {
+            eprintln!("Decryption failed: value out of range or invalid ciphertext");
+            // Handle error appropriately
+        }
+    }
+    ```
+
+    **JavaScript**:
+    ```javascript
+    try {
+      const value = secretKey.decrypt(ciphertext);
+      console.log('Decrypted:', value);
+    } catch (error) {
+      console.error('Decryption failed:', error.message);
+      // Handle error appropriately
+    }
+    ```
+  </Accordion>
+</AccordionGroup>

@@ -1,122 +1,128 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "ZK ElGamal Proof SDK",
+  "theme": "aspen",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#14F195",
+    "light": "#80F8C7",
+    "dark": "#00D179"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/solana-program/zk-elgamal-proof"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/solana-program/zk-elgamal-proof"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/overview",
+              "concepts/elgamal-encryption",
+              "concepts/pedersen-commitments",
+              "concepts/zero-knowledge-proofs"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Proof Types",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "proofs/zero-ciphertext",
+              "proofs/ciphertext-ciphertext-equality",
+              "proofs/ciphertext-commitment-equality",
+              "proofs/pubkey-validity",
+              "proofs/grouped-ciphertext-validity",
+              "proofs/batched-grouped-ciphertext-validity",
+              "proofs/range-proofs",
+              "proofs/percentage-with-cap"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Examples",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "examples/rust-usage",
+              "examples/javascript-usage",
+              "examples/wasm-integration"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "Rust SDK",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "API Reference",
             "pages": [
-              "api-reference/introduction"
+              "rust/overview",
+              "rust/encryption",
+              "rust/proof-data",
+              "rust/instructions",
+              "rust/state"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Modules",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "rust/modules/elgamal",
+              "rust/modules/pedersen",
+              "rust/modules/grouped-elgamal",
+              "rust/modules/auth-encryption",
+              "rust/modules/discrete-log"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "JavaScript SDK",
+        "groups": [
+          {
+            "group": "API Reference",
+            "pages": [
+              "javascript/overview",
+              "javascript/installation",
+              "javascript/instructions"
+            ]
+          },
+          {
+            "group": "Actions",
+            "pages": [
+              "javascript/actions/verify-zero-ciphertext",
+              "javascript/actions/verify-ciphertext-equality",
+              "javascript/actions/verify-pubkey-validity",
+              "javascript/actions/verify-range-proofs",
+              "javascript/actions/close-context"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Tools",
+        "groups": [
+          {
+            "group": "CLI Tools",
+            "pages": [
+              "tools/zk-keygen",
+              "tools/key-management"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

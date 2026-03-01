@@ -1,0 +1,218 @@
+---
+title: "Batched Grouped Ciphertext Validity Proof"
+description: "Efficiently proves validity of multiple grouped ElGamal ciphertexts with the same public keys"
+---
+
+## Overview
+
+The batched grouped ciphertext validity proof provides an efficient way to verify multiple grouped ElGamal ciphertexts when they all use the same set of public keys. Instead of generating separate proofs for each ciphertext, this proof batches them together using a random challenge scalar, significantly reducing proof size and verification time.
+
+This is particularly useful in scenarios with multiple transfers or operations involving the same parties.
+
+<Note>
+  Batched proofs are more efficient than individual proofs when verifying 2 or more grouped ciphertexts with identical public key sets.
+</Note>
+
+## When to Use Batched Proofs
+
+**Use Batched Proofs When:**
+- Multiple grouped ciphertexts share the same public keys
+- Processing multiple transfers in a single transaction
+- Batch processing confidential operations
+- Optimizing verification costs
+
+**Use Individual Proofs When:**
+- Only one grouped ciphertext needs verification
+- Public keys differ between ciphertexts
+- Simplicity is preferred over efficiency
+
+## Proof Variants
+
+Like standard grouped ciphertext proofs, batched variants support:
+- **2 Handles**: `BatchedGroupedCiphertext2HandlesValidityProof`
+- **3 Handles**: `BatchedGroupedCiphertext3HandlesValidityProof`
+
+## Batching Strategy
+
+The batching uses a random linear combination:
+
+```
+Batched verification = Σ (w^i × Individual_Verification_i)
+```
+
+Where `w` is a random challenge scalar from the Fiat-Shamir transcript. This allows verification of all individual proofs in a single algebraic check.
+
+## Proof Structure
+
+The batched proof structure is similar to individual proofs but applies to multiple ciphertexts simultaneously. For the 2-handle case, it still contains:
+
+- `Y_0`: Commitment for the shared Pedersen commitments
+- `Y_1`: Commitment for first handles
+- `Y_2`: Commitment for second handles  
+- `z_r`: Masked randomness (batched)
+- `z_x`: Masked amounts (batched)
+
+## Generating a Batched Proof
+
+```rust
+use solana_zk_sdk::{
+    encryption::{
+        elgamal::ElGamalKeypair,
+        grouped_elgamal::GroupedElGamal,
+        pedersen::PedersenOpening,
+    },
+    zk_elgamal_proof_program::proof_data::{
+        BatchedGroupedCiphertext2HandlesValidityProofData,
+    },
+};
+
+let first_keypair = ElGamalKeypair::new_rand();
+let second_keypair = ElGamalKeypair::new_rand();
+
+// Create multiple grouped ciphertexts
+let amount_1 = 100_u64;
+let opening_1 = PedersenOpening::new_rand();
+let ciphertext_1 = GroupedElGamal::encrypt_with(
+    [first_keypair.pubkey(), second_keypair.pubkey()],
+    amount_1,
+    &opening_1,
+);
+
+let amount_2 = 200_u64;
+let opening_2 = PedersenOpening::new_rand();
+let ciphertext_2 = GroupedElGamal::encrypt_with(
+    [first_keypair.pubkey(), second_keypair.pubkey()],
+    amount_2,
+    &opening_2,
+);
+
+// Generate single batched proof for both ciphertexts
+let batched_proof = BatchedGroupedCiphertext2HandlesValidityProofData::new(
+    first_keypair.pubkey(),
+    second_keypair.pubkey(),
+    vec![&ciphertext_1, &ciphertext_2],
+    vec![amount_1, amount_2],
+    vec![&opening_1, &opening_2],
+)?;
+```
+
+## Use Cases
+
+### Batch Token Transfers
+
+Process multiple confidential transfers in one transaction:
+
+```rust
+// Multiple recipients, same auditor
+let transfers = vec![
+    (recipient_1, 100_u64),
+    (recipient_2, 200_u64),
+    (recipient_3, 150_u64),
+];
+
+let mut ciphertexts = Vec::new();
+let mut amounts = Vec::new();
+let mut openings = Vec::new();
+
+for (recipient, amount) in transfers {
+    let opening = PedersenOpening::new_rand();
+    let ciphertext = GroupedElGamal::encrypt_with(
+        [recipient, auditor_pubkey],
+        amount,
+        &opening,
+    );
+    
+    ciphertexts.push(ciphertext);
+    amounts.push(amount);
+    openings.push(opening);
+}
+
+// Single batched proof for all transfers
+let batched_proof = BatchedGroupedCiphertext2HandlesValidityProofData::new(
+    recipient_pubkey,  // Note: All must share same keys
+    auditor_pubkey,
+    ciphertexts.iter().collect(),
+    amounts,
+    openings.iter().collect(),
+)?;
+```
+
+### Multi-Operation Accounts
+
+- Batch multiple deposits to the same account
+- Process multiple withdrawals together
+- Aggregate balance updates
+- Bundle related financial operations
+
+## Verification Efficiency
+
+**Individual Proofs:**
+- N ciphertexts = N proof verifications
+- N × (computation + storage)
+
+**Batched Proof:**
+- N ciphertexts = 1 batched verification
+- ~40-60% reduction in verification cost
+- ~30-50% reduction in proof size
+
+<Note>
+  The exact efficiency gain depends on the number of ciphertexts batched. Generally, batching 3+ ciphertexts provides significant benefits.
+</Note>
+
+## Security Considerations
+
+<Warning>
+  All ciphertexts in a batch MUST use the exact same public keys. Mixing different key sets will result in invalid proofs.
+</Warning>
+
+<Warning>
+  The security of batched proofs relies on the randomness of the challenge scalar `w`. Never reuse transcripts across different batches.
+</Warning>
+
+### Soundness
+
+The batched proof maintains the same security guarantees as individual proofs:
+- Computational soundness (discrete log hardness)
+- Perfect zero-knowledge
+- Fiat-Shamir security in the random oracle model
+
+## Implementation Notes
+
+From the proof structure, batching is achieved by:
+
+1. Generating individual proof commitments `Y_i` for each ciphertext
+2. Computing challenge scalar `w` from transcript
+3. Combining responses: `z_batched = Σ (w^i × z_i)`
+4. Verifying single batched equation
+
+This technique is known as **challenge-based proof aggregation**.
+
+## Proof Size Comparison
+
+| Scenario | Individual Proofs | Batched Proof | Savings |
+|----------|------------------|---------------|----------|
+| 2 ciphertexts | 320 bytes | 160 bytes | 50% |
+| 4 ciphertexts | 640 bytes | 160 bytes | 75% |
+| 8 ciphertexts | 1,280 bytes | 160 bytes | 87.5% |
+
+<Note>
+  Batched proof size remains constant regardless of the number of ciphertexts batched.
+</Note>
+
+## Limitations
+
+- **Maximum batch size**: Limited by available computation units
+- **Key uniformity**: All ciphertexts must use identical public key sets
+- **Complexity**: More complex to implement than individual proofs
+
+## Related Proofs
+
+- [Grouped Ciphertext Validity](/proofs/grouped-ciphertext-validity): Individual ciphertext validity proof
+- [Range Proofs](/proofs/range-proofs): For proving amounts are in valid ranges
+- [Ciphertext-Commitment Equality](/proofs/ciphertext-commitment-equality): Link ciphertexts with commitments
+
+## Source Code
+
+Sigma proof implementation: `zk-sdk/src/sigma_proofs/batched_grouped_ciphertext_validity/`
+
+Proof data structure: `zk-sdk/src/zk_elgamal_proof_program/proof_data/batched_grouped_ciphertext_validity/`

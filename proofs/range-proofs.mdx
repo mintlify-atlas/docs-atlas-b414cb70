@@ -1,0 +1,299 @@
+---
+title: "Range Proofs"
+description: "Bulletproofs-based range proofs for proving committed values are within specified bit ranges"
+---
+
+## Overview
+
+Range proofs are cryptographic proofs that demonstrate a committed value lies within a specified range without revealing the actual value. The ZK ElGamal SDK implements **Bulletproofs**, an efficient non-interactive zero-knowledge range proof system based on the work by Bünz, Bootle, Boneh, Poelstra, Wuille, and Maxwell.
+
+Range proofs are essential for preventing overflow/underflow attacks in confidential token systems.
+
+<Note>
+  The implementation is based on the original [Bulletproofs paper](https://eprint.iacr.org/2017/1066) and supports range proofs for 64-bit, 128-bit, and 256-bit values.
+</Note>
+
+## Why Range Proofs?
+
+Without range proofs, a malicious actor could:
+- Create negative encrypted values by exploiting field arithmetic
+- Cause integer overflows in encrypted balances
+- Mint tokens out of thin air
+- Double-spend by creating compensating negative balances
+
+**Example Attack Without Range Proof:**
+```rust
+// Without range proof, this is possible:
+let balance = Commitment(100);
+let malicious_transfer = Commitment(-150);  // Negative!
+let result = balance + malicious_transfer;  // = Commitment(-50)
+// User appears to have valid balance due to field wrap-around
+```
+
+Range proofs prevent this by forcing all committed values to be within `[0, 2^n)` for some bit length `n`.
+
+## Proof Variants
+
+The SDK provides three range proof types based on total bit length:
+
+### BatchedRangeProof64
+For proofs where the sum of bit lengths is 64 bits.
+- Proof size: **672 bytes**
+- Inner product proof: 448 bytes
+- Use for: Single 64-bit value or multiple smaller values (e.g., 32+32)
+
+### BatchedRangeProof128  
+For proofs where the sum of bit lengths is 128 bits.
+- Proof size: **736 bytes**
+- Inner product proof: 512 bytes
+- Use for: Two 64-bit values or equivalent combinations
+
+### BatchedRangeProof256
+For proofs where the sum of bit lengths is 256 bits.
+- Proof size: **800 bytes**
+- Inner product proof: 576 bytes  
+- Use for: Four 64-bit values or equivalent combinations
+
+<Note>
+  The proof variant is determined by the **sum** of all bit lengths being proved, not the number of commitments.
+</Note>
+
+## Batched Range Proofs
+
+Range proofs support batching up to **8 commitments** in a single proof, where each commitment can prove a different bit length.
+
+### Batching Rules
+
+- **Maximum commitments**: 8
+- **Maximum individual bit length**: 64 bits per commitment
+- **Total bit length**: Must match proof variant (64, 128, or 256)
+
+### Example Batching Scenarios
+
+```rust
+// BatchedRangeProof64 examples:
+[64]                    // One 64-bit value
+[32, 32]               // Two 32-bit values  
+[16, 16, 16, 16]      // Four 16-bit values
+[8, 8, 8, 8, 32]      // Mixed bit lengths summing to 64
+
+// BatchedRangeProof128 examples:
+[64, 64]              // Two 64-bit values
+[32, 32, 64]         // Three values
+[64, 32, 16, 16]     // Mixed sizes
+
+// BatchedRangeProof256 examples:
+[64, 64, 64, 64]     // Four 64-bit values
+[32, 32, 32, 32, 32, 32, 32, 32]  // Eight 32-bit values
+```
+
+## Proof Data Context
+
+```rust
+pub struct BatchedRangeProofContext {
+    pub commitments: [PodPedersenCommitment; 8],  // Max 8 commitments
+    pub bit_lengths: [u8; 8],                      // Corresponding bit lengths
+}
+```
+
+## Generating a Range Proof
+
+### Single Value (64-bit)
+
+```rust
+use solana_zk_sdk::{
+    encryption::pedersen::{Pedersen, PedersenCommitment},
+    zk_elgamal_proof_program::proof_data::batched_range_proof::{
+        batched_range_proof_u64::BatchedRangeProofU64Data,
+    },
+};
+
+let amount = 1000_u64;
+let (commitment, opening) = Pedersen::new(amount);
+
+// Generate 64-bit range proof
+let proof_data = BatchedRangeProofU64Data::new(
+    vec![&commitment],
+    vec![amount],
+    vec![64],  // Bit length
+    vec![&opening],
+)?;
+```
+
+### Multiple Values (Batched)
+
+```rust
+// Prove three amounts in one proof
+let amount1 = 500_u64;
+let amount2 = 1500_u64;
+let total = 2000_u64;
+
+let (commitment1, opening1) = Pedersen::new(amount1);
+let (commitment2, opening2) = Pedersen::new(amount2);
+let (commitment_total, opening_total) = Pedersen::new(total);
+
+// Batch proof: 32 + 32 + 64 = 128 bits total
+let proof_data = BatchedRangeProofU128Data::new(
+    vec![&commitment1, &commitment2, &commitment_total],
+    vec![amount1, amount2, total],
+    vec![32, 32, 64],  // Individual bit lengths
+    vec![&opening1, &opening2, &opening_total],
+)?;
+```
+
+## Use Cases
+
+### Token Transfers
+
+Prove transfer amounts are non-negative:
+
+```rust
+let transfer_amount = 100_u64;
+let (transfer_commitment, opening) = Pedersen::new(transfer_amount);
+
+// Prove amount is in [0, 2^64)
+let range_proof = BatchedRangeProofU64Data::new(
+    vec![&transfer_commitment],
+    vec![transfer_amount],
+    vec![64],
+    vec![&opening],
+)?;
+```
+
+### Balance Consistency
+
+Prove input and output balances are valid:
+
+```rust
+let old_balance = 1000_u64;
+let transfer = 300_u64;  
+let new_balance = 700_u64;
+
+let (old_comm, old_open) = Pedersen::new(old_balance);
+let (transfer_comm, transfer_open) = Pedersen::new(transfer);
+let (new_comm, new_open) = Pedersen::new(new_balance);
+
+// Prove all three values are in valid range
+let range_proof = BatchedRangeProofU128Data::new(
+    vec![&old_comm, &transfer_comm, &new_comm],
+    vec![old_balance, transfer, new_balance],
+    vec![64, 64, 64],  // All 64-bit
+    vec![&old_open, &transfer_open, &new_open],
+)?;
+```
+
+### Fee Validation
+
+```rust
+// Prove fee is reasonable (use smaller bit length)
+let fee = 10_u64;  // Small fee
+let (fee_commitment, fee_opening) = Pedersen::new(fee);
+
+// Only need 16 bits for reasonable fees
+let fee_range_proof = BatchedRangeProofU64Data::new(
+    vec![&fee_commitment],
+    vec![fee],
+    vec![16],  // Smaller range = cheaper verification
+    vec![&fee_opening],
+)?;
+```
+
+## Verification
+
+Range proof verification involves:
+
+1. **Inner product argument**: Verifies the committed value has a valid binary representation
+2. **Polynomial evaluation**: Checks the value lies in the specified range
+3. **Batch verification**: Combines multiple range proofs efficiently
+
+The verification algorithm is specified in the [Bulletproofs paper](https://eprint.iacr.org/2017/1066), Section 4.3.
+
+## Security Considerations
+
+<Warning>
+  Always use range proofs with other equality/validity proofs. A range proof alone only proves the committed value is in range - it doesn't prove the commitment relates correctly to encrypted ciphertexts.
+</Warning>
+
+### Combined Proof Pattern
+
+```rust
+// 1. Create commitment and ciphertext
+let amount = 100_u64;
+let (commitment, opening) = Pedersen::new(amount);
+let ciphertext = recipient_pubkey.encrypt(amount);
+
+// 2. Prove ciphertext matches commitment
+let equality_proof = CiphertextCommitmentEqualityProofData::new(
+    &keypair,
+    &ciphertext,
+    &commitment,
+    &opening,
+    amount,
+)?;
+
+// 3. Prove committed amount is in valid range
+let range_proof = BatchedRangeProofU64Data::new(
+    vec![&commitment],
+    vec![amount],
+    vec![64],
+    vec![&opening],
+)?;
+
+// Both proofs required for security!
+```
+
+### Choosing Bit Lengths
+
+- **64 bits**: Standard for token amounts (supports up to ~18.4 million tokens with 9 decimals)
+- **32 bits**: Suitable for smaller amounts or counts  
+- **16 bits**: Good for fees, percentages, or small increments
+- **Custom**: Match your application's max value requirements
+
+<Note>
+  Smaller bit lengths = faster verification. Choose the smallest bit length that accommodates your maximum value.
+</Note>
+
+## Proof Size Optimization
+
+Bulletproofs are logarithmic in the bit length:
+
+| Bit Length | Inner Product Proof Size |
+|------------|-------------------------|
+| 64         | 448 bytes              |
+| 128        | 512 bytes (+64)        |
+| 256        | 576 bytes (+64)        |
+
+Each doubling of bit length adds only ~64 bytes.
+
+## Implementation Details
+
+The range proof structure (`range_proof/mod.rs:81`):
+
+```rust
+pub struct RangeProof {
+    pub(crate) A: CompressedRistretto,      // Commitment to bit vectors
+    pub(crate) S: CompressedRistretto,      // Commitment to blinding vectors
+    pub(crate) T_1: CompressedRistretto,    // Polynomial commitment t_1
+    pub(crate) T_2: CompressedRistretto,    // Polynomial commitment t_2
+    pub(crate) t_x: Scalar,                  // Polynomial evaluation
+    pub(crate) t_x_blinding: Scalar,         // Blinding for t_x
+    pub(crate) e_blinding: Scalar,           // Blinding for inner product
+    pub(crate) ipp_proof: InnerProductProof, // Inner product proof
+}
+```
+
+## Related Proofs
+
+- [Ciphertext-Commitment Equality](/proofs/ciphertext-commitment-equality): Link range-proofed commitments with ciphertexts
+- [Percentage with Cap](/proofs/percentage-with-cap): Uses range proofs for fee validation
+
+## References
+
+- [Bulletproofs: Short Proofs for Confidential Transactions and More](https://eprint.iacr.org/2017/1066)
+- [Dalek Bulletproofs Implementation](https://github.com/dalek-cryptography/bulletproofs)
+
+## Source Code
+
+Range proof implementation: `zk-sdk/src/range_proof/mod.rs`
+
+Batched proof data: `zk-sdk/src/zk_elgamal_proof_program/proof_data/batched_range_proof/`

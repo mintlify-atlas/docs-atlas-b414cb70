@@ -1,0 +1,61 @@
+---
+title: 'JavaScript SDK Overview'
+description: 'JavaScript client library for the Solana ZK ElGamal Proof program'
+---
+
+## Overview
+
+The `@solana-program/zk-elgamal-proof` package provides a complete JavaScript/TypeScript client for interacting with the ZK ElGamal Proof program on Solana. This SDK enables developers to verify zero-knowledge proofs for encrypted data using ElGamal encryption.
+
+## Features
+
+- **Zero-Knowledge Proof Verification**: Verify various types of ZK proofs without revealing underlying data
+- **ElGamal Encryption Support**: Work with ElGamal encrypted ciphertexts
+- **Context State Management**: Create and manage proof verification context accounts
+- **Flexible Proof Input**: Submit proofs directly in transaction data or reference them from record accounts
+- **Full TypeScript Support**: Complete type definitions for all functions and interfaces
+
+## Package Information
+
+- **Package Name**: `@solana-program/zk-elgamal-proof`
+- **Repository**: [github.com/solana-program/zk-elgamal-proof](https://github.com/solana-program/zk-elgamal-proof)
+- **License**: Apache-2.0
+
+## Supported Proof Types
+
+The SDK supports verification of the following proof types:
+
+1. **Zero Ciphertext** - Verify that an ElGamal ciphertext encrypts zero
+2. **Ciphertext-Ciphertext Equality** - Verify two ciphertexts encrypt the same value
+3. **Ciphertext-Commitment Equality** - Verify a ciphertext and commitment contain the same value
+4. **Public Key Validity** - Verify an ElGamal public key is valid
+5. **Percentage With Cap** - Verify a percentage calculation with a maximum cap
+6. **Batched Range Proofs** - Verify values are within a specific range (U64, U128, U256)
+7. **Grouped Ciphertext Validity** - Verify validity of grouped ciphertexts (2 or 3 handles)
+
+## Program Address
+
+The ZK ElGamal Proof program is deployed at:
+
+```typescript
+ZkE1Gama1Proof11111111111111111111111111111
+```
+
+## Module Structure
+
+The SDK is organized into several modules:
+
+- **`generic`** - Core instruction builders and low-level interfaces
+- **`actions`** - High-level helper functions for common operations
+- **`constants`** - Account size constants and configuration values
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="./installation">
+    Install the SDK and configure your project
+  </Card>
+  <Card title="Instructions" icon="code" href="./instructions">
+    Learn about available instructions and how to use them
+  </Card>
+</CardGroup>

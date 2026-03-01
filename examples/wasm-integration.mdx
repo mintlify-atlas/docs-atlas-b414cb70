@@ -1,0 +1,483 @@
+---
+title: WASM Integration Examples
+description: Learn how to integrate the ZK ElGamal Proof SDK in web applications using WebAssembly
+---
+
+This guide demonstrates how to integrate the ZK ElGamal Proof SDK in browser-based applications using WebAssembly with real working examples.
+
+## Overview
+
+The SDK provides WebAssembly bindings that allow you to use zero-knowledge proofs directly in the browser. There are three main integration patterns:
+
+1. **Native Web** - Direct browser usage without a bundler
+2. **Vite** - Integration with Vite bundler
+3. **Webpack** - Integration with Webpack bundler
+4. **Node.js** - Server-side usage
+
+## Installation
+
+```bash
+npm install @solana/zk-sdk
+# or
+pnpm add @solana/zk-sdk
+# or
+yarn add @solana/zk-sdk
+```
+
+## Native Web Integration
+
+### Setup
+
+For native web usage without a bundler, you need to initialize the WASM module:
+
+```javascript
+import init, {
+  PubkeyValidityProofData,
+  ElGamalKeypair,
+} from './node_modules/@solana/zk-sdk/dist/web/index.js';
+
+// Initialize WASM module
+await init();
+```
+
+### Complete Example
+
+Here's a complete working example for native web:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ZK SDK Web Integration</title>
+</head>
+<body>
+  <h1>ZK ElGamal Proof SDK</h1>
+  <div id="status" class="running">Initializing...</div>
+  <pre id="logs"></pre>
+
+  <script type="module">
+    import init, {
+      PubkeyValidityProofData,
+      ElGamalKeypair,
+    } from './node_modules/@solana/zk-sdk/dist/web/index.js';
+
+    const statusElement = document.getElementById('status');
+    const logsElement = document.getElementById('logs');
+
+    function log(message) {
+      console.log(message);
+      logsElement.textContent += message + '\n';
+    }
+
+    function setStatus(statusClass, message) {
+      statusElement.className = statusClass;
+      statusElement.textContent = message;
+    }
+
+    async function runTests() {
+      try {
+        log('Initializing WASM module...');
+        await init();
+        log('WASM module initialized.');
+        setStatus('running', 'Running tests...');
+
+        // Generate keypair
+        const keypair = new ElGamalKeypair();
+        if (!keypair) throw new Error('Keypair creation failed');
+        log('✅ Keypair generated.');
+
+        // Create proof
+        const proof = new PubkeyValidityProofData(keypair);
+        if (!proof) throw new Error('Proof creation failed');
+        log('✅ Proof generated.');
+
+        // Verify proof
+        proof.verify();
+        log('✅ Proof verified.');
+
+        setStatus('success', '✅ Web integration tests passed!');
+        log('Tests passed!');
+      } catch (error) {
+        console.error('❌ Web integration tests failed:', error);
+        setStatus('failure', '❌ Web integration tests failed.');
+        log('Error: ' + error.message);
+        log(error.stack);
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>
+```
+
+### Running the Example
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start a static server
+pnpm start
+
+# Open browser to http://localhost:8080
+```
+
+## Vite Integration
+
+### Setup
+
+Vite handles WASM initialization automatically:
+
+```javascript
+import {
+  PubkeyValidityProofData,
+  ElGamalKeypair,
+} from '@solana/zk-sdk/bundler';
+
+// No init() call needed - Vite handles it
+```
+
+### Complete Example
+
+```javascript
+// index.test.js
+import {
+  PubkeyValidityProofData,
+  ElGamalKeypair,
+} from '@solana/zk-sdk/bundler';
+
+const statusElement = document.getElementById('status');
+const logsElement = document.getElementById('logs');
+
+function log(message) {
+  console.log(message);
+  logsElement.textContent += message + '\n';
+}
+
+function setStatus(statusClass, message) {
+  statusElement.className = statusClass;
+  statusElement.textContent = message;
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message || 'Assertion failed');
+  }
+}
+
+async function runTests() {
+  log('--- Running Bundler (Vite) integration tests ---');
+
+  try {
+    log('WASM module initialized (handled by Vite).');
+    setStatus('running', 'Running tests...');
+
+    // Generate keypair
+    const keypair = new ElGamalKeypair();
+    assert(keypair, 'Keypair creation failed');
+    log('✅ Keypair generated.');
+
+    // Create proof
+    const proof = new PubkeyValidityProofData(keypair);
+    assert(proof, 'Proof creation failed');
+    log('✅ Proof generated.');
+
+    // Verify proof
+    proof.verify();
+    log('✅ Proof verified.');
+
+    setStatus('success', '✅ Bundler integration tests passed!');
+    log('Tests passed!');
+  } catch (error) {
+    console.error('❌ Bundler integration tests failed:', error);
+    setStatus(
+      'failure',
+      '❌ Bundler integration tests failed. Check logs.'
+    );
+    log('Error: ' + error.message);
+    log(error.stack);
+  }
+}
+
+runTests();
+```
+
+### Vite Configuration
+
+```javascript
+// vite.config.js
+import { defineConfig } from 'vite';
+
+export default defineConfig({
+  server: {
+    port: 8081,
+  },
+  optimizeDeps: {
+    exclude: ['@solana/zk-sdk'],
+  },
+});
+```
+
+### Running with Vite
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start Vite dev server
+pnpm start
+
+# Open browser to http://localhost:8081
+```
+
+## Webpack Integration
+
+### Webpack Configuration
+
+Webpack requires special configuration for WASM:
+
+```javascript
+// webpack.config.js
+const path = require('path');
+const HtmlWebpackPlugin = require('html-webpack-plugin');
+
+module.exports = {
+  mode: 'development',
+  entry: './src/index.js',
+  output: {
+    path: path.resolve(__dirname, 'dist'),
+    filename: 'bundle.js',
+  },
+  experiments: {
+    asyncWebAssembly: true,
+  },
+  plugins: [
+    new HtmlWebpackPlugin({
+      template: './src/index.html',
+    }),
+  ],
+  devServer: {
+    port: 8082,
+  },
+};
+```
+
+### Usage with Webpack
+
+```javascript
+// src/index.js
+import {
+  PubkeyValidityProofData,
+  ElGamalKeypair,
+} from '@solana/zk-sdk/bundler';
+
+// Same code as Vite example
+async function runTests() {
+  const keypair = new ElGamalKeypair();
+  const proof = new PubkeyValidityProofData(keypair);
+  proof.verify();
+  console.log('✅ Tests passed!');
+}
+
+runTests();
+```
+
+### Running with Webpack
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start Webpack dev server
+pnpm start
+
+# Open browser to http://localhost:8082
+```
+
+## Node.js Integration
+
+For server-side usage:
+
+```javascript
+const assert = require('assert');
+const {
+  PubkeyValidityProofData,
+  ElGamalKeypair,
+} = require('@solana/zk-sdk/node');
+
+console.log('--- Running Node.js (CJS) integration tests ---');
+
+try {
+  const keypair = new ElGamalKeypair();
+  assert.ok(keypair, 'Keypair creation failed');
+
+  const proof = new PubkeyValidityProofData(keypair);
+  assert.ok(proof, 'Proof creation failed');
+
+  proof.verify();
+
+  console.log('✅ Node.js integration tests passed!');
+} catch (error) {
+  console.error('❌ Node.js integration tests failed:', error);
+  process.exit(1);
+}
+```
+
+## Advanced Usage Patterns
+
+### Lazy Loading WASM
+
+For better initial load performance:
+
+```javascript
+let wasmInitialized = false;
+
+async function ensureWasmInitialized() {
+  if (!wasmInitialized) {
+    const init = (await import('@solana/zk-sdk/dist/web/index.js')).default;
+    await init();
+    wasmInitialized = true;
+  }
+}
+
+async function createProof() {
+  await ensureWasmInitialized();
+  const { ElGamalKeypair, PubkeyValidityProofData } = 
+    await import('@solana/zk-sdk/dist/web/index.js');
+  
+  const keypair = new ElGamalKeypair();
+  return new PubkeyValidityProofData(keypair);
+}
+```
+
+### Worker Thread Integration
+
+Offload proof generation to a worker:
+
+```javascript
+// worker.js
+import init, { 
+  ElGamalKeypair, 
+  PubkeyValidityProofData 
+} from '@solana/zk-sdk/dist/web/index.js';
+
+let initialized = false;
+
+self.onmessage = async (e) => {
+  if (!initialized) {
+    await init();
+    initialized = true;
+  }
+
+  const { type } = e.data;
+
+  if (type === 'generate_proof') {
+    const keypair = new ElGamalKeypair();
+    const proof = new PubkeyValidityProofData(keypair);
+    const proofBytes = proof.toBytes();
+    
+    self.postMessage({ 
+      type: 'proof_generated', 
+      proof: proofBytes 
+    });
+  }
+};
+```
+
+```javascript
+// main.js
+const worker = new Worker('worker.js', { type: 'module' });
+
+worker.onmessage = (e) => {
+  const { type, proof } = e.data;
+  if (type === 'proof_generated') {
+    console.log('Proof generated:', proof);
+  }
+};
+
+worker.postMessage({ type: 'generate_proof' });
+```
+
+## Testing Your Integration
+
+### Automated Testing with Playwright
+
+```javascript
+// integration.spec.js
+import { test, expect } from '@playwright/test';
+
+async function checkWasmStatus(page) {
+  const status = page.locator('#status');
+
+  await expect(status).not.toHaveClass('running', { timeout: 20000 });
+
+  if (await status.evaluate((el) => el.classList.contains('failure'))) {
+    const logs = await page.locator('#logs').textContent();
+    const message = await status.textContent();
+    throw new Error(
+      `❌ WASM integration tests failed: ${message}\n--- Logs ---\n${logs}`
+    );
+  }
+
+  await expect(status).toHaveClass('success');
+}
+
+test.describe('WASM Integration Tests', () => {
+  test('Web (Static Server) @ 8080', async ({ page }) => {
+    await page.goto('http://localhost:8080');
+    await checkWasmStatus(page);
+  });
+
+  test('Vite (Bundler) @ 8081', async ({ page }) => {
+    await page.goto('http://localhost:8081');
+    await checkWasmStatus(page);
+  });
+
+  test('Webpack (Bundler) @ 8082', async ({ page }) => {
+    await page.goto('http://localhost:8082');
+    await checkWasmStatus(page);
+  });
+});
+```
+
+## Troubleshooting
+
+### WASM Not Loading
+
+If WASM fails to load:
+
+1. Check that your server serves `.wasm` files with the correct MIME type:
+   ```
+   Content-Type: application/wasm
+   ```
+
+2. Ensure CORS headers are set if loading from a different origin
+
+3. Check browser console for initialization errors
+
+### Bundler Issues
+
+For Vite:
+- Add `@solana/zk-sdk` to `optimizeDeps.exclude`
+- Use the `/bundler` export path
+
+For Webpack:
+- Enable `experiments.asyncWebAssembly`
+- Use Webpack 5 or later
+
+### Performance Optimization
+
+1. **Lazy load** the WASM module only when needed
+2. **Use workers** for proof generation to avoid blocking UI
+3. **Cache** the initialized WASM module
+4. **Preload** WASM in the HTML head:
+   ```html
+   <link rel="preload" href="path/to/module.wasm" as="fetch" crossorigin>
+   ```
+
+## Next Steps
+
+- See [JavaScript Usage](/examples/javascript-usage) for API examples
+- See [Rust Usage](/examples/rust-usage) for native implementation
+- Refer to the [JavaScript SDK Overview](/javascript/overview) for detailed API documentation

@@ -1,0 +1,317 @@
+---
+title: "State Management"
+description: "Proof context state account structures"
+---
+
+## Overview
+
+The ZK ElGamal Proof program can store verified proof context data on-chain in dedicated accounts. This allows other programs to reference and verify that specific proofs were successfully validated.
+
+## Proof vs Statement
+
+In zero-knowledge proof systems, there is a key distinction:
+
+- **Statement** - The public values that a proof certifies (e.g., an ElGamal ciphertext, public keys)
+- **Proof** - The cryptographic data demonstrating the statement's validity
+
+The **proof** is ephemeral and discarded after verification. The **statement** (context data) can be stored on-chain as a verifiable receipt.
+
+## ProofContextState
+
+The main state structure for storing verified proof context.
+
+<ParamField path="ProofContextState<T>" type="struct">
+  On-chain state for a verified zero-knowledge proof statement.
+  
+  ```rust
+  #[repr(C)]
+  pub struct ProofContextState<T: Pod> {
+      pub context_state_authority: Address,
+      pub proof_type: PodProofType,
+      pub proof_context: T,
+  }
+  ```
+</ParamField>
+
+### Fields
+
+<ResponseField name="context_state_authority" type="Address">
+  The authority that can close the account and reclaim lamports.
+  
+  **Size:** 32 bytes
+</ResponseField>
+
+<ResponseField name="proof_type" type="PodProofType">
+  The type of proof that was verified (e.g., `ZeroCiphertext`, `PubkeyValidity`).
+  
+  **Size:** 1 byte
+</ResponseField>
+
+<ResponseField name="proof_context" type="T: Pod">
+  The actual proof context data. Type depends on the proof type:
+  - `ZeroCiphertextProofContext` for zero-ciphertext proofs
+  - `PubkeyValidityProofContext` for pubkey validity proofs
+  - etc.
+  
+  **Size:** Varies by proof type
+</ResponseField>
+
+### Methods
+
+<ResponseField name="encode" type="(context_state_authority: &Address, proof_type: ProofType, proof_context: &T) -> Vec<u8>">
+  Encodes the proof context state into bytes for account storage.
+  
+  ```rust
+  use solana_zk_sdk::zk_elgamal_proof_program::{
+      state::ProofContextState,
+      proof_data::{ProofType, ZeroCiphertextProofContext},
+  };
+  use solana_address::Address;
+  
+  let authority = Address::new_unique();
+  let context = ZeroCiphertextProofContext {
+      pubkey: pod_pubkey,
+      ciphertext: pod_ciphertext,
+  };
+  
+  let encoded = ProofContextState::encode(
+      &authority,
+      ProofType::ZeroCiphertext,
+      &context,
+  );
+  
+  // Write `encoded` to the account data
+  ```
+</ResponseField>
+
+<ResponseField name="try_from_bytes" type="(input: &[u8]) -> Result<&Self, InstructionError>">
+  Deserializes a proof context state from account data.
+  
+  **Generic parameter required** - You must specify the proof context type.
+  
+  ```rust
+  use solana_zk_sdk::zk_elgamal_proof_program::{
+      state::ProofContextState,
+      proof_data::ZeroCiphertextProofContext,
+  };
+  
+  // Read from account
+  let state: &ProofContextState<ZeroCiphertextProofContext> = 
+      ProofContextState::try_from_bytes(&account_data)?;
+  
+  println!("Authority: {}", state.context_state_authority);
+  println!("Proof type: {:?}", state.proof_type);
+  ```
+</ResponseField>
+
+## ProofContextStateMeta
+
+Access generic-independent fields without specifying the proof context type.
+
+<ParamField path="ProofContextStateMeta" type="struct">
+  Proof context state without the generic proof context field.
+  
+  ```rust
+  #[repr(C)]
+  pub struct ProofContextStateMeta {
+      pub context_state_authority: Address,
+      pub proof_type: PodProofType,
+  }
+  ```
+</ParamField>
+
+### Fields
+
+<ResponseField name="context_state_authority" type="Address">
+  The authority that can close the account (32 bytes)
+</ResponseField>
+
+<ResponseField name="proof_type" type="PodProofType">
+  The type of proof (1 byte)
+</ResponseField>
+
+### Methods
+
+<ResponseField name="try_from_bytes" type="(input: &[u8]) -> Result<&Self, InstructionError>">
+  Deserializes metadata from account data without knowing the proof context type.
+  
+  ```rust
+  use solana_zk_sdk::zk_elgamal_proof_program::{
+      state::ProofContextStateMeta,
+      proof_data::ProofType,
+  };
+  
+  let meta = ProofContextStateMeta::try_from_bytes(&account_data)?;
+  
+  match meta.proof_type.into() {
+      ProofType::ZeroCiphertext => {
+          // Handle zero-ciphertext context
+      },
+      ProofType::PubkeyValidity => {
+          // Handle pubkey validity context
+      },
+      _ => {},
+  }
+  ```
+</ResponseField>
+
+## Account Size by Proof Type
+
+Each proof type requires a different account size:
+
+<ParamField path="ZeroCiphertext" type="size">
+  **Total:** 129 bytes
+  - Authority: 32 bytes
+  - Proof type: 1 byte
+  - Context: 96 bytes (32-byte pubkey + 64-byte ciphertext)
+</ParamField>
+
+<ParamField path="PubkeyValidity" type="size">
+  **Total:** 65 bytes
+  - Authority: 32 bytes
+  - Proof type: 1 byte
+  - Context: 32 bytes (32-byte pubkey)
+</ParamField>
+
+<ParamField path="CiphertextCiphertextEquality" type="size">
+  **Total:** 225 bytes
+  - Authority: 32 bytes
+  - Proof type: 1 byte
+  - Context: 192 bytes (2 pubkeys + 2 ciphertexts)
+</ParamField>
+
+<Note>
+  Context state accounts must be pre-allocated to the exact size before being passed to a proof verification instruction.
+</Note>
+
+## Example: Creating and Reading State
+
+### Creating a Context State Account
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::{
+        instruction::{ProofInstruction, ContextStateInfo},
+        proof_data::{ProofType, ZeroCiphertextProofData},
+        state::ProofContextState,
+    },
+};
+use solana_address::Address;
+use solana_instruction::Instruction;
+
+let keypair = ElGamalKeypair::new_rand();
+let ciphertext = keypair.pubkey().encrypt(0_u64);
+let proof_data = ZeroCiphertextProofData::new(&keypair, &ciphertext)?;
+
+// Calculate required account size
+let context_size = std::mem::size_of::<ProofContextState<ZeroCiphertextProofContext>>();
+// context_size = 129 bytes
+
+// Pre-allocate account (using Solana System Program)
+// ... account creation code ...
+
+// Create verification instruction with context state
+let context_state_account = Address::new_unique();
+let authority = Address::new_unique();
+
+let context_info = ContextStateInfo {
+    context_state_account: &context_state_account,
+    context_state_authority: &authority,
+};
+
+let instruction = ProofInstruction::VerifyZeroCiphertext
+    .encode_verify_proof(Some(context_info), &proof_data);
+
+// After successful verification, the program writes the context to the account
+```
+
+### Reading Context State
+
+```rust
+use solana_zk_sdk::zk_elgamal_proof_program::{
+    state::{ProofContextState, ProofContextStateMeta},
+    proof_data::{ProofType, ZeroCiphertextProofContext},
+};
+
+// Read metadata first to determine proof type
+let meta = ProofContextStateMeta::try_from_bytes(&account_data)?;
+
+match meta.proof_type.into() {
+    ProofType::ZeroCiphertext => {
+        let state: &ProofContextState<ZeroCiphertextProofContext> = 
+            ProofContextState::try_from_bytes(&account_data)?;
+        
+        println!("Authority: {}", state.context_state_authority);
+        println!("Pubkey: {}", state.proof_context.pubkey);
+        println!("Ciphertext encrypts zero");
+    },
+    ProofType::PubkeyValidity => {
+        let state: &ProofContextState<PubkeyValidityProofContext> = 
+            ProofContextState::try_from_bytes(&account_data)?;
+        
+        println!("Valid pubkey: {}", state.proof_context.pubkey);
+    },
+    _ => {},
+}
+```
+
+### Closing Context State
+
+```rust
+use solana_zk_sdk::zk_elgamal_proof_program::instruction::{
+    close_context_state,
+    ContextStateInfo,
+};
+use solana_address::Address;
+
+let context_info = ContextStateInfo {
+    context_state_account: &context_state_account,
+    context_state_authority: &authority,
+};
+
+// Close account and send lamports to destination
+let close_instruction = close_context_state(
+    context_info,
+    &destination_account,
+);
+
+// The authority must sign this transaction
+```
+
+## Context State Lifecycle
+
+1. **Pre-allocate** - Create an account with the exact size needed for the proof context type
+2. **Verify** - Submit a proof verification instruction with context state info
+3. **Program writes** - If verification succeeds, the program writes the context to the account
+4. **Reference** - Other programs can read and verify the stored context
+5. **Close** - The authority can close the account to reclaim lamports
+
+## Safety Considerations
+
+<Warning>
+  Always verify the `context_state_authority` matches the expected authority before trusting the proof context data.
+</Warning>
+
+<Warning>
+  The `proof_type` field must match the expected proof type before casting to a specific context type.
+</Warning>
+
+```rust
+// Safe pattern for reading context state
+let meta = ProofContextStateMeta::try_from_bytes(&account_data)?;
+
+// Verify authority
+if meta.context_state_authority != expected_authority {
+    return Err("Invalid authority");
+}
+
+// Verify proof type
+if meta.proof_type != ProofType::ZeroCiphertext as u8 {
+    return Err("Wrong proof type");
+}
+
+// Safe to cast
+let state: &ProofContextState<ZeroCiphertextProofContext> = 
+    ProofContextState::try_from_bytes(&account_data)?;
+```

@@ -1,0 +1,408 @@
+---
+title: "Proof Data Types"
+description: "Zero-knowledge proof data structures and generation"
+---
+
+## Overview
+
+The `proof_data` module contains data types for all supported zero-knowledge proofs. Each proof type consists of:
+- **Context data** - Public values being certified
+- **Proof** - Cryptographic proof data
+
+## ProofType Enum
+
+<ParamField path="ProofType" type="enum">
+  Enumeration of all supported proof types.
+  
+  ```rust
+  pub enum ProofType {
+      Uninitialized,
+      ZeroCiphertext,
+      CiphertextCiphertextEquality,
+      CiphertextCommitmentEquality,
+      PubkeyValidity,
+      PercentageWithCap,
+      BatchedRangeProofU64,
+      BatchedRangeProofU128,
+      BatchedRangeProofU256,
+      GroupedCiphertext2HandlesValidity,
+      BatchedGroupedCiphertext2HandlesValidity,
+      GroupedCiphertext3HandlesValidity,
+      BatchedGroupedCiphertext3HandlesValidity,
+  }
+  ```
+</ParamField>
+
+## ZkProofData Trait
+
+All proof data types implement the `ZkProofData` trait.
+
+```rust
+pub trait ZkProofData<T: Pod> {
+    const PROOF_TYPE: ProofType;
+    
+    fn context_data(&self) -> &T;
+    
+    #[cfg(not(target_os = "solana"))]
+    fn verify_proof(&self) -> Result<(), ProofVerificationError>;
+}
+```
+
+## Zero Ciphertext Proof
+
+Certifies that an ElGamal ciphertext encrypts the value zero.
+
+### ZeroCiphertextProofData
+
+<ParamField path="ZeroCiphertextProofData" type="struct">
+  Proof data for the `VerifyZeroCiphertext` instruction.
+  
+  **Size:** 192 bytes (96 bytes context + 96 bytes proof)
+</ParamField>
+
+#### Fields
+
+<ResponseField name="context" type="ZeroCiphertextProofContext">
+  The context data for verification (96 bytes)
+</ResponseField>
+
+<ResponseField name="proof" type="PodZeroCiphertextProof">
+  The cryptographic proof (96 bytes)
+</ResponseField>
+
+#### Methods
+
+<ResponseField name="new" type="(keypair: &ElGamalKeypair, ciphertext: &ElGamalCiphertext) -> Result<Self>">
+  Creates a new zero-ciphertext proof.
+  
+  ```rust
+  use solana_zk_sdk::{
+      encryption::elgamal::ElGamalKeypair,
+      zk_elgamal_proof_program::proof_data::ZeroCiphertextProofData,
+  };
+  
+  let keypair = ElGamalKeypair::new_rand();
+  let ciphertext = keypair.pubkey().encrypt(0_u64);
+  let proof_data = ZeroCiphertextProofData::new(&keypair, &ciphertext)?;
+  
+  // Verify the proof
+  proof_data.verify_proof()?;
+  ```
+</ResponseField>
+
+### ZeroCiphertextProofContext
+
+<ParamField path="ZeroCiphertextProofContext" type="struct">
+  Context data needed to verify a zero-ciphertext proof.
+  
+  **Size:** 96 bytes
+</ParamField>
+
+#### Fields
+
+<ResponseField name="pubkey" type="PodElGamalPubkey">
+  The ElGamal public key (32 bytes)
+</ResponseField>
+
+<ResponseField name="ciphertext" type="PodElGamalCiphertext">
+  The ElGamal ciphertext that encrypts zero (64 bytes)
+</ResponseField>
+
+## Ciphertext-Ciphertext Equality Proof
+
+Certifies that two ElGamal ciphertexts encrypt the same message.
+
+### CiphertextCiphertextEqualityProofData
+
+<ParamField path="CiphertextCiphertextEqualityProofData" type="struct">
+  Proof data for the `VerifyCiphertextCiphertextEquality` instruction.
+</ParamField>
+
+#### Fields
+
+<ResponseField name="context" type="CiphertextCiphertextEqualityProofContext">
+  The context data containing both ciphertexts and public keys
+</ResponseField>
+
+<ResponseField name="proof" type="PodCiphertextCiphertextEqualityProof">
+  The cryptographic proof
+</ResponseField>
+
+#### Methods
+
+<ResponseField name="new" type="(first_keypair: &ElGamalKeypair, second_pubkey: &ElGamalPubkey, first_ciphertext: &ElGamalCiphertext, second_ciphertext: &ElGamalCiphertext, second_opening: &PedersenOpening, amount: u64) -> Result<Self>">
+  Creates a ciphertext-ciphertext equality proof.
+  
+  ```rust
+  use solana_zk_sdk::{
+      encryption::{
+          elgamal::{ElGamalKeypair, ElGamalPubkey},
+          pedersen::PedersenOpening,
+      },
+      zk_elgamal_proof_program::proof_data::CiphertextCiphertextEqualityProofData,
+  };
+  
+  let first_keypair = ElGamalKeypair::new_rand();
+  let second_keypair = ElGamalKeypair::new_rand();
+  let amount = 100_u64;
+  
+  let first_ciphertext = first_keypair.pubkey().encrypt(amount);
+  let second_opening = PedersenOpening::new_rand();
+  let second_ciphertext = second_keypair.pubkey().encrypt_with(amount, &second_opening);
+  
+  let proof_data = CiphertextCiphertextEqualityProofData::new(
+      &first_keypair,
+      second_keypair.pubkey(),
+      &first_ciphertext,
+      &second_ciphertext,
+      &second_opening,
+      amount,
+  )?;
+  
+  proof_data.verify_proof()?;
+  ```
+</ResponseField>
+
+### CiphertextCiphertextEqualityProofContext
+
+<ParamField path="CiphertextCiphertextEqualityProofContext" type="struct">
+  Context data for ciphertext-ciphertext equality verification.
+  
+  **Size:** 192 bytes
+</ParamField>
+
+#### Fields
+
+<ResponseField name="first_pubkey" type="PodElGamalPubkey">
+  The first ElGamal public key (32 bytes)
+</ResponseField>
+
+<ResponseField name="second_pubkey" type="PodElGamalPubkey">
+  The second ElGamal public key (32 bytes)
+</ResponseField>
+
+<ResponseField name="first_ciphertext" type="PodElGamalCiphertext">
+  The first ElGamal ciphertext (64 bytes)
+</ResponseField>
+
+<ResponseField name="second_ciphertext" type="PodElGamalCiphertext">
+  The second ElGamal ciphertext (64 bytes)
+</ResponseField>
+
+## Ciphertext-Commitment Equality Proof
+
+Certifies that an ElGamal ciphertext and a Pedersen commitment encode the same value.
+
+### CiphertextCommitmentEqualityProofData
+
+<ParamField path="CiphertextCommitmentEqualityProofData" type="struct">
+  Proof data for the `VerifyCiphertextCommitmentEquality` instruction.
+</ParamField>
+
+#### Fields
+
+<ResponseField name="context" type="CiphertextCommitmentEqualityProofContext">
+  The context data containing the ciphertext, commitment, and public key
+</ResponseField>
+
+<ResponseField name="proof" type="PodCiphertextCommitmentEqualityProof">
+  The cryptographic proof
+</ResponseField>
+
+### CiphertextCommitmentEqualityProofContext
+
+<ParamField path="CiphertextCommitmentEqualityProofContext" type="struct">
+  Context data for ciphertext-commitment equality verification.
+</ParamField>
+
+## Public Key Validity Proof
+
+Certifies that an ElGamal public key is well-formed and the prover knows the corresponding secret key.
+
+### PubkeyValidityProofData
+
+<ParamField path="PubkeyValidityProofData" type="struct">
+  Proof data for the `VerifyPubkeyValidity` instruction.
+  
+  **Size:** 96 bytes (32 bytes context + 64 bytes proof)
+</ParamField>
+
+#### Fields
+
+<ResponseField name="context" type="PubkeyValidityProofContext">
+  The context data containing the public key (32 bytes)
+</ResponseField>
+
+<ResponseField name="proof" type="PodPubkeyValidityProof">
+  The cryptographic proof (64 bytes)
+</ResponseField>
+
+#### Methods
+
+<ResponseField name="new" type="(keypair: &ElGamalKeypair) -> Result<Self>">
+  Creates a public key validity proof.
+  
+  ```rust
+  use solana_zk_sdk::{
+      encryption::elgamal::ElGamalKeypair,
+      zk_elgamal_proof_program::proof_data::PubkeyValidityProofData,
+  };
+  
+  let keypair = ElGamalKeypair::new_rand();
+  let proof_data = PubkeyValidityProofData::new(&keypair)?;
+  
+  proof_data.verify_proof()?;
+  ```
+</ResponseField>
+
+### PubkeyValidityProofContext
+
+<ParamField path="PubkeyValidityProofContext" type="struct">
+  Context data for public key validity verification.
+  
+  **Size:** 32 bytes
+</ParamField>
+
+#### Fields
+
+<ResponseField name="pubkey" type="PodElGamalPubkey">
+  The ElGamal public key to be proved (32 bytes)
+</ResponseField>
+
+## Percentage with Cap Proof
+
+Certifies that a tuple of Pedersen commitments satisfy a percentage relation.
+
+### PercentageWithCapProofData
+
+<ParamField path="PercentageWithCapProofData" type="struct">
+  Proof data for the `VerifyPercentageWithCap` instruction.
+</ParamField>
+
+#### Fields
+
+<ResponseField name="context" type="PercentageWithCapProofContext">
+  The context data containing the commitments
+</ResponseField>
+
+<ResponseField name="proof" type="PodPercentageWithCapProof">
+  The cryptographic proof
+</ResponseField>
+
+### PercentageWithCapProofContext
+
+<ParamField path="PercentageWithCapProofContext" type="struct">
+  Context data for percentage-with-cap verification.
+</ParamField>
+
+## Batched Range Proofs
+
+Certify that Pedersen commitments encode values within specific bit ranges.
+
+### BatchedRangeProofU64Data
+
+<ParamField path="BatchedRangeProofU64Data" type="struct">
+  Proof data for 64-bit batched range proofs.
+  
+  Certifies that commitments encode positive numbers with total bit-length ≤ 64.
+</ParamField>
+
+### BatchedRangeProofU128Data
+
+<ParamField path="BatchedRangeProofU128Data" type="struct">
+  Proof data for 128-bit batched range proofs.
+  
+  Certifies that commitments encode positive numbers with total bit-length ≤ 128.
+</ParamField>
+
+### BatchedRangeProofU256Data
+
+<ParamField path="BatchedRangeProofU256Data" type="struct">
+  Proof data for 256-bit batched range proofs.
+  
+  Certifies that commitments encode positive numbers with total bit-length ≤ 256.
+</ParamField>
+
+### BatchedRangeProofContext
+
+<ParamField path="BatchedRangeProofContext" type="struct">
+  Context data shared by all batched range proof types.
+</ParamField>
+
+## Grouped Ciphertext Validity Proofs
+
+Certify that grouped ElGamal ciphertexts are well-formed and can be decrypted by the associated private keys.
+
+### GroupedCiphertext2HandlesValidityProofData
+
+<ParamField path="GroupedCiphertext2HandlesValidityProofData" type="struct">
+  Proof data for grouped ciphertexts with 2 decrypt handles.
+</ParamField>
+
+#### Fields
+
+<ResponseField name="context" type="GroupedCiphertext2HandlesValidityProofContext">
+  The context data containing the grouped ciphertext
+</ResponseField>
+
+<ResponseField name="proof" type="PodGroupedCiphertext2HandlesValidityProof">
+  The cryptographic proof
+</ResponseField>
+
+### GroupedCiphertext3HandlesValidityProofData
+
+<ParamField path="GroupedCiphertext3HandlesValidityProofData" type="struct">
+  Proof data for grouped ciphertexts with 3 decrypt handles.
+</ParamField>
+
+#### Fields
+
+<ResponseField name="context" type="GroupedCiphertext3HandlesValidityProofContext">
+  The context data containing the grouped ciphertext
+</ResponseField>
+
+<ResponseField name="proof" type="PodGroupedCiphertext3HandlesValidityProof">
+  The cryptographic proof
+</ResponseField>
+
+### Batched Variants
+
+<ParamField path="BatchedGroupedCiphertext2HandlesValidityProofData" type="struct">
+  Batched proof for two grouped ciphertexts with 2 handles each.
+  
+  More efficient than two individual proofs.
+</ParamField>
+
+<ParamField path="BatchedGroupedCiphertext3HandlesValidityProofData" type="struct">
+  Batched proof for two grouped ciphertexts with 3 handles each.
+  
+  More efficient than two individual proofs.
+</ParamField>
+
+## Example: Creating Multiple Proof Types
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::proof_data::{
+        ZeroCiphertextProofData,
+        PubkeyValidityProofData,
+    },
+};
+
+let keypair = ElGamalKeypair::new_rand();
+
+// Public key validity proof
+let pubkey_proof = PubkeyValidityProofData::new(&keypair)?;
+assert!(pubkey_proof.verify_proof().is_ok());
+
+// Zero ciphertext proof
+let zero_ciphertext = keypair.pubkey().encrypt(0_u64);
+let zero_proof = ZeroCiphertextProofData::new(&keypair, &zero_ciphertext)?;
+assert!(zero_proof.verify_proof().is_ok());
+
+// Invalid zero ciphertext proof (encrypts non-zero)
+let non_zero_ciphertext = keypair.pubkey().encrypt(100_u64);
+let result = ZeroCiphertextProofData::new(&keypair, &non_zero_ciphertext);
+assert!(result.is_err()); // Proof generation fails
+```

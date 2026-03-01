@@ -1,0 +1,470 @@
+---
+title: JavaScript Usage Examples
+description: Learn how to use the ZK ElGamal Proof SDK in JavaScript and TypeScript applications
+---
+
+This guide demonstrates how to use the ZK ElGamal Proof SDK in JavaScript/TypeScript applications with real working examples from the test suite.
+
+## Installation
+
+Install the SDK from npm:
+
+```bash
+npm install @solana/zk-sdk
+# or
+pnpm add @solana/zk-sdk
+# or
+yarn add @solana/zk-sdk
+```
+
+## Environment-Specific Imports
+
+The SDK provides different entry points for different environments:
+
+<Tabs>
+  <Tab title="Node.js">
+    ```javascript
+    // For Node.js (CommonJS or ESM)
+    import { 
+      ElGamalKeypair, 
+      PubkeyValidityProofData 
+    } from '@solana/zk-sdk/node';
+    ```
+  </Tab>
+  <Tab title="Browser (Bundler)">
+    ```javascript
+    // For browser with bundler (Vite, Webpack, etc.)
+    import { 
+      ElGamalKeypair, 
+      PubkeyValidityProofData 
+    } from '@solana/zk-sdk/bundler';
+    ```
+  </Tab>
+  <Tab title="Browser (Native ESM)">
+    ```javascript
+    // For browser without bundler
+    import init, { 
+      ElGamalKeypair, 
+      PubkeyValidityProofData 
+    } from '@solana/zk-sdk/dist/web/index.js';
+    
+    // Initialize WASM
+    await init();
+    ```
+  </Tab>
+</Tabs>
+
+## Basic Key Generation
+
+### Generating an ElGamal Keypair
+
+```javascript
+import { ElGamalKeypair } from '@solana/zk-sdk/node';
+
+// Generate a random keypair
+const keypair = new ElGamalKeypair();
+
+// Get the public key
+const pubkey = keypair.pubkey();
+
+// Keypairs can be serialized
+const keypairBytes = keypair.toBytes();
+const restoredKeypair = ElGamalKeypair.fromBytes(keypairBytes);
+```
+
+## Creating Zero-Knowledge Proofs
+
+### Pubkey Validity Proof
+
+Prove knowledge of the secret key for a given public key:
+
+```javascript
+import { 
+  ElGamalKeypair, 
+  PubkeyValidityProofData 
+} from '@solana/zk-sdk/node';
+
+// Generate keypair
+const keypair = new ElGamalKeypair();
+
+// Create proof
+const proof = new PubkeyValidityProofData(keypair);
+
+// Verify the proof locally
+proof.verify();
+
+// Serialize for on-chain verification
+const proofBytes = proof.toBytes();
+```
+
+### Ciphertext-Ciphertext Equality Proof
+
+Prove that two ciphertexts encrypt the same value:
+
+```javascript
+import { 
+  ElGamalKeypair, 
+  CiphertextCiphertextEqualityProofData,
+  PedersenOpening 
+} from '@solana/zk-sdk/node';
+
+const keypair1 = new ElGamalKeypair();
+const keypair2 = new ElGamalKeypair();
+const amount = 55n;
+
+// Encrypt same value under two different keys
+const ciphertext1 = keypair1.pubkey().encryptU64(amount);
+
+const opening2 = new PedersenOpening();
+const ciphertext2 = keypair2.pubkey().encryptWith(amount, opening2);
+
+// Create equality proof
+const proof = new CiphertextCiphertextEqualityProofData(
+  keypair1,
+  keypair2.pubkey(),
+  ciphertext1,
+  ciphertext2,
+  opening2,
+  amount
+);
+
+// Verify locally
+proof.verify();
+
+// Serialize for blockchain
+const proofBytes = proof.toBytes();
+```
+
+### Batched Range Proof
+
+Prove that multiple values are within specified bit ranges:
+
+```javascript
+import { 
+  BatchedRangeProofU64Data,
+  PedersenCommitment,
+  PedersenOpening 
+} from '@solana/zk-sdk/node';
+
+// Create commitments for multiple values
+const amount1 = 255n;  // 8-bit max
+const amount2 = (1n << 56n) - 1n;  // 56-bit max
+
+const opening1 = new PedersenOpening();
+const opening2 = new PedersenOpening();
+
+const commitment1 = PedersenCommitment.from(amount1, opening1);
+const commitment2 = PedersenCommitment.from(amount2, opening2);
+
+// Create batched range proof
+const commitments = [commitment1, commitment2];
+const amounts = new BigUint64Array([amount1, amount2]);
+const bitLengths = new Uint8Array([8, 56]);
+const openings = [opening1, opening2];
+
+const proof = new BatchedRangeProofU64Data(
+  commitments,
+  amounts,
+  bitLengths,
+  openings
+);
+
+// Verify the proof
+proof.verify();
+
+// Serialize
+const proofBytes = proof.toBytes();
+```
+
+## On-Chain Verification
+
+### Ephemeral Verification (No Context State)
+
+Verify a proof within a transaction without storing state:
+
+```typescript
+import { verifyPubkeyValidity } from '@solana/zk-sdk-client';
+import { 
+  ElGamalKeypair, 
+  PubkeyValidityProofData 
+} from '@solana/zk-sdk/node';
+
+// Generate proof
+const keypair = new ElGamalKeypair();
+const proof = new PubkeyValidityProofData(keypair);
+const proofData = proof.toBytes();
+
+// Create verification instructions
+const instructions = await verifyPubkeyValidity({
+  rpc: client.rpc,
+  payer,
+  proofData,
+  // No contextState means ephemeral verification
+});
+
+// Send transaction
+await sendAndConfirmInstructions(client, payer, instructions);
+```
+
+### Persistent Verification (With Context State)
+
+Store the verified proof on-chain for later use:
+
+```typescript
+import { verifyPubkeyValidity } from '@solana/zk-sdk-client';
+import { generateKeyPairSigner } from '@solana/kit';
+import { 
+  ElGamalKeypair, 
+  PubkeyValidityProofData 
+} from '@solana/zk-sdk/node';
+
+// Generate proof
+const keypair = new ElGamalKeypair();
+const proof = new PubkeyValidityProofData(keypair);
+const proofData = proof.toBytes();
+
+// Create context account
+const contextAccount = await generateKeyPairSigner();
+
+// Create verification instructions with context state
+const instructions = await verifyPubkeyValidity({
+  rpc: client.rpc,
+  payer,
+  proofData,
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+// Send transaction
+await sendAndConfirmInstructions(client, payer, instructions);
+
+// The proof is now stored on-chain at contextAccount.address
+```
+
+### Storing Proofs in Record Accounts
+
+For large proofs, use Record accounts for efficient storage:
+
+```typescript
+import { verifyPubkeyValidity } from '@solana/zk-sdk-client';
+import { 
+  createRecord, 
+  createWriteInstruction,
+  RECORD_META_DATA_SIZE 
+} from '@solana-program/record';
+import { 
+  ElGamalKeypair, 
+  PubkeyValidityProofData 
+} from '@solana/zk-sdk/node';
+
+// Generate proof
+const keypair = new ElGamalKeypair();
+const proof = new PubkeyValidityProofData(keypair);
+const proofData = proof.toBytes();
+
+// Step 1: Create Record account
+const recordAuthority = await generateKeyPairSigner();
+const { recordKeypair, ixs: initIxs } = await createRecord({
+  rpc: client.rpc,
+  payer,
+  authority: recordAuthority.address,
+  dataLength: BigInt(proofData.length),
+});
+
+// Step 2: Write proof to Record
+const writeIx = createWriteInstruction({
+  recordAccount: recordKeypair.address,
+  authority: recordAuthority,
+  offset: 0n,
+  data: proofData,
+});
+
+await sendAndConfirmInstructions(
+  client, 
+  payer, 
+  [...initIxs, writeIx]
+);
+
+// Step 3: Verify using Record account
+const verifyIxs = await verifyPubkeyValidity({
+  rpc: client.rpc,
+  payer,
+  proofData: {
+    account: recordKeypair.address,
+    offset: Number(RECORD_META_DATA_SIZE),
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, verifyIxs);
+```
+
+## Multiple Proof Types
+
+### Ciphertext Commitment Equality
+
+```typescript
+import { verifyCiphertextCommitmentEquality } from '@solana/zk-sdk-client';
+import { 
+  ElGamalKeypair,
+  CiphertextCommitmentEqualityProofData,
+  PedersenCommitment,
+  PedersenOpening
+} from '@solana/zk-sdk/node';
+
+const keypair = new ElGamalKeypair();
+const amount = 100n;
+
+// Create ciphertext and commitment
+const ciphertext = keypair.pubkey().encryptU64(amount);
+const opening = new PedersenOpening();
+const commitment = PedersenCommitment.from(amount, opening);
+
+// Create proof
+const proof = new CiphertextCommitmentEqualityProofData(
+  keypair,
+  ciphertext,
+  commitment,
+  opening,
+  amount
+);
+
+// Verify on-chain
+const instructions = await verifyCiphertextCommitmentEquality({
+  rpc: client.rpc,
+  payer,
+  proofData: proof.toBytes(),
+});
+
+await sendAndConfirmInstructions(client, payer, instructions);
+```
+
+### Grouped Ciphertext Validity
+
+```typescript
+import { verifyGroupedCiphertext2HandlesValidity } from '@solana/zk-sdk-client';
+import { 
+  ElGamalKeypair,
+  GroupedCiphertext2HandlesValidityProofData,
+  PedersenOpening
+} from '@solana/zk-sdk/node';
+
+const destination = new ElGamalKeypair();
+const auditor = new ElGamalKeypair();
+const amount = 55n;
+
+// Create grouped ciphertext
+const opening = new PedersenOpening();
+const groupedCiphertext = {
+  commitment: PedersenCommitment.from(amount, opening),
+  destinationHandle: destination.pubkey().decryptHandle(opening),
+  auditorHandle: auditor.pubkey().decryptHandle(opening),
+};
+
+// Create proof
+const proof = new GroupedCiphertext2HandlesValidityProofData(
+  destination,
+  auditor.pubkey(),
+  groupedCiphertext,
+  opening,
+  amount
+);
+
+// Verify on-chain
+const instructions = await verifyGroupedCiphertext2HandlesValidity({
+  rpc: client.rpc,
+  payer,
+  proofData: proof.toBytes(),
+});
+
+await sendAndConfirmInstructions(client, payer, instructions);
+```
+
+## Working with TypeScript
+
+The SDK is fully typed for TypeScript:
+
+```typescript
+import type { 
+  ElGamalKeypair, 
+  ElGamalPubkey,
+  ElGamalCiphertext 
+} from '@solana/zk-sdk/node';
+import type { 
+  Address,
+  TransactionSigner 
+} from '@solana/kit';
+
+// Type-safe function
+async function createAndVerifyProof(
+  keypair: ElGamalKeypair,
+  payer: TransactionSigner
+): Promise<Uint8Array> {
+  const proof = new PubkeyValidityProofData(keypair);
+  proof.verify();
+  return proof.toBytes();
+}
+```
+
+## Error Handling
+
+```javascript
+import { 
+  ElGamalKeypair, 
+  PubkeyValidityProofData 
+} from '@solana/zk-sdk/node';
+
+try {
+  const keypair = new ElGamalKeypair();
+  const proof = new PubkeyValidityProofData(keypair);
+  
+  // This throws if verification fails
+  proof.verify();
+  
+  console.log('Proof verified successfully');
+} catch (error) {
+  console.error('Proof verification failed:', error);
+}
+```
+
+## Node.js Complete Example
+
+Here's a complete working example for Node.js:
+
+```javascript
+const assert = require('assert');
+const {
+  PubkeyValidityProofData,
+  ElGamalKeypair,
+} = require('@solana/zk-sdk/node');
+
+console.log('--- Running Node.js integration tests ---');
+
+try {
+  // Generate keypair
+  const keypair = new ElGamalKeypair();
+  assert.ok(keypair, 'Keypair creation failed');
+  console.log('✅ Keypair generated');
+
+  // Create proof
+  const proof = new PubkeyValidityProofData(keypair);
+  assert.ok(proof, 'Proof creation failed');
+  console.log('✅ Proof generated');
+
+  // Verify proof
+  proof.verify();
+  console.log('✅ Proof verified');
+
+  console.log('All tests passed!');
+} catch (error) {
+  console.error('Tests failed:', error);
+  process.exit(1);
+}
+```
+
+## Next Steps
+
+- See [WASM Integration](/examples/wasm-integration) for browser-specific examples
+- See [Rust Usage](/examples/rust-usage) for native Rust implementation
+- Refer to the [JavaScript SDK Overview](/javascript/overview) for detailed API documentation

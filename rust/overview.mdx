@@ -1,0 +1,169 @@
+---
+title: "Overview"
+description: "Rust SDK for creating and verifying zero-knowledge proofs on encrypted data"
+---
+
+## Introduction
+
+The `solana-zk-sdk` crate provides tools to create and verify zero-knowledge proofs on encrypted data using ElGamal encryption and Pedersen commitments over Curve25519.
+
+## Module Structure
+
+The SDK is organized into the following main modules:
+
+### Core Modules
+
+<Card title="encryption" icon="lock">
+  Encryption-related data structures including:
+  - Pedersen commitments using Ristretto/Curve25519
+  - Twisted ElGamal encryption scheme
+  - AES-GCM-SIV authenticated encryption
+</Card>
+
+<Card title="zk_elgamal_proof_program" icon="shield-check">
+  Zero-knowledge proof program containing:
+  - Instruction types for proof verification
+  - Proof data types and contexts
+  - State management for proof contexts
+</Card>
+
+<Card title="errors" icon="triangle-exclamation">
+  Error types for ElGamal operations and proof generation/verification
+</Card>
+
+<Card title="pod" icon="box">
+  Plain Old Data types for serialization
+</Card>
+
+### Available Proof Types
+
+The SDK supports multiple zero-knowledge proof types:
+
+- **Zero Ciphertext** - Proves an ElGamal ciphertext encrypts zero
+- **Ciphertext-Ciphertext Equality** - Proves two ciphertexts encrypt the same message
+- **Ciphertext-Commitment Equality** - Proves a ciphertext and commitment encode the same value
+- **Public Key Validity** - Proves an ElGamal public key is well-formed
+- **Percentage with Cap** - Proves percentage relations between commitments
+- **Batched Range Proofs** - Proves values are within specific bit ranges (64, 128, 256-bit)
+- **Grouped Ciphertext Validity** - Proves grouped ciphertexts are well-formed (2 or 3 handles)
+
+## Constants
+
+<ParamField path="TRANSCRIPT_DOMAIN" type="&[u8]">
+  Global transcript domain separator for proof generation.
+  
+  ```rust
+  pub const TRANSCRIPT_DOMAIN: &[u8] = b"solana-zk-elgamal-proof-program-v1";
+  ```
+  
+  <Warning>
+    This string MUST be changed for any fork or separate deployment to prevent cross-chain proof replay attacks.
+  </Warning>
+</ParamField>
+
+<ParamField path="UNIT_LEN" type="usize">
+  Byte length of a compressed Ristretto point or scalar in Curve25519 (32 bytes)
+</ParamField>
+
+<ParamField path="RISTRETTO_POINT_LEN" type="usize">
+  Byte length of a compressed Ristretto point (32 bytes)
+</ParamField>
+
+<ParamField path="SCALAR_LEN" type="usize">
+  Byte length of a scalar in Curve25519 (32 bytes)
+</ParamField>
+
+## Quick Start
+
+### Creating an ElGamal Keypair
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+let keypair = ElGamalKeypair::new_rand();
+let pubkey = keypair.pubkey();
+```
+
+### Encrypting a Value
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+let keypair = ElGamalKeypair::new_rand();
+let amount = 100_u64;
+let ciphertext = keypair.pubkey().encrypt(amount);
+```
+
+### Creating a Zero-Knowledge Proof
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::proof_data::ZeroCiphertextProofData,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let ciphertext = keypair.pubkey().encrypt(0_u64);
+let proof_data = ZeroCiphertextProofData::new(&keypair, &ciphertext)?;
+
+// Verify the proof
+proof_data.verify_proof()?;
+```
+
+## Features
+
+### Homomorphic Operations
+
+ElGamal ciphertexts support homomorphic addition and scalar multiplication:
+
+```rust
+let ciphertext_1 = pubkey.encrypt(10_u64);
+let ciphertext_2 = pubkey.encrypt(20_u64);
+
+// Addition: encrypts 30
+let sum = ciphertext_1 + ciphertext_2;
+
+// Scalar multiplication: encrypts 50
+let product = ciphertext_1 * Scalar::from(5_u64);
+```
+
+### Discrete Log Decryption
+
+Decryption returns a `DiscreteLog` instance that must be solved to recover the plaintext:
+
+```rust
+let ciphertext = keypair.pubkey().encrypt(100_u64);
+let discrete_log = keypair.secret().decrypt(&ciphertext);
+
+// For small values (32-bit)
+if let Some(amount) = keypair.secret().decrypt_u32(&ciphertext) {
+    println!("Decrypted amount: {}", amount);
+}
+```
+
+## Program ID
+
+The ZK ElGamal Proof program has a fixed program ID on Solana:
+
+```rust
+use solana_zk_sdk::zk_elgamal_proof_program;
+
+let program_id = zk_elgamal_proof_program::id();
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Encryption" href="/rust/encryption" icon="lock">
+    Learn about ElGamal encryption and Pedersen commitments
+  </Card>
+  <Card title="Proof Data" href="/rust/proof-data" icon="file-lines">
+    Explore available proof types and their usage
+  </Card>
+  <Card title="Instructions" href="/rust/instructions" icon="code">
+    Build proof verification instructions
+  </Card>
+  <Card title="State" href="/rust/state" icon="database">
+    Manage proof context state accounts
+  </Card>
+</CardGroup>

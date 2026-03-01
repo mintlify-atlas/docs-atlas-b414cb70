@@ -1,0 +1,329 @@
+---
+title: "Instructions"
+description: "ZK ElGamal Proof program instruction builders"
+---
+
+## Overview
+
+The ZK ElGamal Proof program provides instructions for verifying zero-knowledge proofs on-chain. Each proof verification instruction follows a two-step process:
+
+1. **Verify the proof** - The program verifies the cryptographic proof
+2. **Store context (optional)** - The program can optionally store the proof context to a dedicated account
+
+## ProofInstruction Enum
+
+All proof verification instructions are defined in the `ProofInstruction` enum.
+
+```rust
+pub enum ProofInstruction {
+    CloseContextState,
+    VerifyZeroCiphertext,
+    VerifyCiphertextCiphertextEquality,
+    VerifyCiphertextCommitmentEquality,
+    VerifyPubkeyValidity,
+    VerifyPercentageWithCap,
+    VerifyBatchedRangeProofU64,
+    VerifyBatchedRangeProofU128,
+    VerifyBatchedRangeProofU256,
+    VerifyGroupedCiphertext2HandlesValidity,
+    VerifyBatchedGroupedCiphertext2HandlesValidity,
+    VerifyGroupedCiphertext3HandlesValidity,
+    VerifyBatchedGroupedCiphertext3HandlesValidity,
+}
+```
+
+## Proof Submission Modes
+
+There are two ways to submit proofs:
+
+### Mode A: Proof in Instruction Data
+
+The proof is included directly in the instruction data. This is simpler but limited by transaction size.
+
+```rust
+let instruction = ProofInstruction::VerifyZeroCiphertext.encode_verify_proof(
+    None, // No context state
+    &proof_data,
+);
+```
+
+### Mode B: Proof in Separate Account
+
+The proof is pre-written to an account, and the instruction references it by offset. This is required for larger proofs.
+
+```rust
+let instruction = ProofInstruction::VerifyZeroCiphertext.encode_verify_proof_from_account(
+    None,
+    &proof_account,
+    offset,
+);
+```
+
+## Context State Storage
+
+Proof context can be stored on-chain for later reference by other programs.
+
+### ContextStateInfo
+
+<ParamField path="ContextStateInfo" type="struct">
+  Information for creating a context state account.
+  
+  ```rust
+  pub struct ContextStateInfo<'a> {
+      pub context_state_account: &'a Address,
+      pub context_state_authority: &'a Address,
+  }
+  ```
+</ParamField>
+
+#### Fields
+
+<ResponseField name="context_state_account" type="&Address">
+  The account to store the proof context
+</ResponseField>
+
+<ResponseField name="context_state_authority" type="&Address">
+  The authority that can close the context account
+</ResponseField>
+
+## Instruction Builders
+
+### encode_verify_proof
+
+<ResponseField name="encode_verify_proof" type="<T, U>(&self, context_state_info: Option<ContextStateInfo>, proof_data: &T) -> Instruction">
+  Creates a proof verification instruction with the proof in instruction data.
+  
+  **Type Parameters:**
+  - `T: Pod + ZkProofData<U>` - The proof data type
+  - `U: Pod` - The proof context type
+  
+  **Parameters:**
+  - `context_state_info` - Optional context state account info
+  - `proof_data` - The proof data to verify
+  
+  **Returns:** A Solana `Instruction`
+  
+  ```rust
+  use solana_zk_sdk::{
+      encryption::elgamal::ElGamalKeypair,
+      zk_elgamal_proof_program::{
+          instruction::{ProofInstruction, ContextStateInfo},
+          proof_data::ZeroCiphertextProofData,
+      },
+  };
+  use solana_address::Address;
+  
+  let keypair = ElGamalKeypair::new_rand();
+  let ciphertext = keypair.pubkey().encrypt(0_u64);
+  let proof_data = ZeroCiphertextProofData::new(&keypair, &ciphertext)?;
+  
+  // Without context state
+  let instruction = ProofInstruction::VerifyZeroCiphertext
+      .encode_verify_proof(None, &proof_data);
+  
+  // With context state
+  let context_state_info = ContextStateInfo {
+      context_state_account: &context_account,
+      context_state_authority: &authority,
+  };
+  let instruction = ProofInstruction::VerifyZeroCiphertext
+      .encode_verify_proof(Some(context_state_info), &proof_data);
+  ```
+</ResponseField>
+
+### encode_verify_proof_from_account
+
+<ResponseField name="encode_verify_proof_from_account" type="(&self, context_state_info: Option<ContextStateInfo>, proof_account: &Address, offset: u32) -> Instruction">
+  Creates a proof verification instruction reading the proof from an account.
+  
+  **Parameters:**
+  - `context_state_info` - Optional context state account info
+  - `proof_account` - Account containing the proof data
+  - `offset` - Byte offset within the account where the proof starts
+  
+  **Returns:** A Solana `Instruction`
+  
+  ```rust
+  use solana_zk_sdk::zk_elgamal_proof_program::instruction::ProofInstruction;
+  use solana_address::Address;
+  
+  // Proof must be pre-written to proof_account
+  let instruction = ProofInstruction::VerifyZeroCiphertext
+      .encode_verify_proof_from_account(
+          None,
+          &proof_account,
+          0, // offset
+      );
+  ```
+</ResponseField>
+
+### instruction_type
+
+<ResponseField name="instruction_type" type="(input: &[u8]) -> Option<Self>">
+  Extracts the instruction type from instruction data.
+  
+  ```rust
+  let instruction_type = ProofInstruction::instruction_type(&instruction_data);
+  ```
+</ResponseField>
+
+### proof_data
+
+<ResponseField name="proof_data" type="<T, U>(input: &[u8]) -> Option<&T>">
+  Extracts proof data from instruction data.
+  
+  ```rust
+  let proof_data: Option<&ZeroCiphertextProofData> = 
+      ProofInstruction::proof_data(&instruction_data);
+  ```
+</ResponseField>
+
+## CloseContextState Instruction
+
+Closes a proof context state account and reclaims lamports.
+
+### close_context_state
+
+<ResponseField name="close_context_state" type="(context_state_info: ContextStateInfo, destination_account: &Address) -> Instruction">
+  Creates an instruction to close a context state account.
+  
+  **Accounts expected:**
+  1. `[writable]` The proof context account to close
+  2. `[writable]` The destination account for lamports
+  3. `[signer]` The context account's owner
+  
+  ```rust
+  use solana_zk_sdk::zk_elgamal_proof_program::instruction::{
+      close_context_state,
+      ContextStateInfo,
+  };
+  use solana_address::Address;
+  
+  let context_state_info = ContextStateInfo {
+      context_state_account: &context_account,
+      context_state_authority: &authority,
+  };
+  
+  let instruction = close_context_state(
+      context_state_info,
+      &destination_account,
+  );
+  ```
+</ResponseField>
+
+## Account Structure by Mode
+
+### Proof in Instruction Data
+
+#### Without Context State
+```rust
+// No accounts required
+let instruction = proof_instruction.encode_verify_proof(None, &proof_data);
+```
+
+#### With Context State
+```rust
+// Accounts:
+// 0. [writable] context_state_account
+// 1. [] context_state_authority
+let context_info = ContextStateInfo {
+    context_state_account: &context_account,
+    context_state_authority: &authority,
+};
+let instruction = proof_instruction.encode_verify_proof(
+    Some(context_info),
+    &proof_data,
+);
+```
+
+### Proof in Account
+
+#### Without Context State
+```rust
+// Accounts:
+// 0. [] proof_account
+let instruction = proof_instruction.encode_verify_proof_from_account(
+    None,
+    &proof_account,
+    offset,
+);
+```
+
+#### With Context State
+```rust
+// Accounts:
+// 0. [] proof_account
+// 1. [writable] context_state_account
+// 2. [] context_state_authority
+let context_info = ContextStateInfo {
+    context_state_account: &context_account,
+    context_state_authority: &authority,
+};
+let instruction = proof_instruction.encode_verify_proof_from_account(
+    Some(context_info),
+    &proof_account,
+    offset,
+);
+```
+
+## Complete Example
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::{
+        instruction::{ProofInstruction, ContextStateInfo},
+        proof_data::{
+            ZeroCiphertextProofData,
+            PubkeyValidityProofData,
+        },
+    },
+};
+use solana_address::Address;
+use solana_instruction::Instruction;
+
+let keypair = ElGamalKeypair::new_rand();
+
+// Create a zero-ciphertext proof
+let ciphertext = keypair.pubkey().encrypt(0_u64);
+let zero_proof = ZeroCiphertextProofData::new(&keypair, &ciphertext)?;
+
+// Build instruction without context state
+let instruction: Instruction = ProofInstruction::VerifyZeroCiphertext
+    .encode_verify_proof(None, &zero_proof);
+
+// Build instruction with context state
+let context_state_account = Address::new_unique();
+let authority = Address::new_unique();
+
+let context_info = ContextStateInfo {
+    context_state_account: &context_state_account,
+    context_state_authority: &authority,
+};
+
+let instruction_with_state = ProofInstruction::VerifyZeroCiphertext
+    .encode_verify_proof(Some(context_info), &zero_proof);
+
+// Later: close the context state account
+let close_instruction = close_context_state(
+    context_info,
+    &authority, // lamports sent back to authority
+);
+```
+
+## Program ID
+
+```rust
+use solana_zk_sdk::zk_elgamal_proof_program;
+
+let program_id = zk_elgamal_proof_program::id();
+
+// Check if an address is the ZK ElGamal Proof program
+if zk_elgamal_proof_program::check_id(&some_address) {
+    // This is the ZK ElGamal Proof program
+}
+```
+
+<Note>
+  Context state accounts must be pre-allocated to the exact size of the expected context data before being included in a proof verification instruction.
+</Note>

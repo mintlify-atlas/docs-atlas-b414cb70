@@ -1,0 +1,391 @@
+---
+title: "Encryption Module"
+description: "ElGamal encryption and Pedersen commitment API reference"
+---
+
+## Overview
+
+The encryption module provides implementations of:
+- Pedersen commitments using Ristretto/Curve25519
+- Twisted ElGamal public-key encryption
+- AES-GCM-SIV authenticated encryption
+
+## Constants
+
+<ParamField path="AE_KEY_LEN" type="usize" default="16">
+  Byte length of an authenticated encryption secret key
+</ParamField>
+
+<ParamField path="AE_CIPHERTEXT_LEN" type="usize" default="36">
+  Byte length of a complete authenticated encryption ciphertext (includes ciphertext and nonce)
+</ParamField>
+
+<ParamField path="DECRYPT_HANDLE_LEN" type="usize" default="32">
+  Byte length of a decrypt handle
+</ParamField>
+
+<ParamField path="ELGAMAL_CIPHERTEXT_LEN" type="usize" default="64">
+  Byte length of an ElGamal ciphertext (commitment + decrypt handle)
+</ParamField>
+
+<ParamField path="ELGAMAL_PUBKEY_LEN" type="usize" default="32">
+  Byte length of an ElGamal public key
+</ParamField>
+
+<ParamField path="ELGAMAL_SECRET_KEY_LEN" type="usize" default="32">
+  Byte length of an ElGamal secret key
+</ParamField>
+
+<ParamField path="ELGAMAL_KEYPAIR_LEN" type="usize" default="64">
+  Byte length of an ElGamal keypair (public key + secret key)
+</ParamField>
+
+<ParamField path="PEDERSEN_OPENING_LEN" type="usize" default="32">
+  Byte length of a Pedersen opening
+</ParamField>
+
+<ParamField path="PEDERSEN_COMMITMENT_LEN" type="usize" default="32">
+  Byte length of a Pedersen commitment
+</ParamField>
+
+## ElGamal Encryption
+
+### ElGamalKeypair
+
+An ElGamal encryption keypair containing public and secret keys.
+
+#### Methods
+
+<ResponseField name="new_rand" type="() -> Self">
+  Generates a random ElGamal keypair using `OsRng`.
+  
+  ```rust
+  use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+  
+  let keypair = ElGamalKeypair::new_rand();
+  ```
+</ResponseField>
+
+<ResponseField name="new" type="(secret: ElGamalSecretKey) -> Self">
+  Creates a keypair from an existing secret key.
+  
+  ```rust
+  let secret = ElGamalSecretKey::new_rand();
+  let keypair = ElGamalKeypair::new(secret);
+  ```
+</ResponseField>
+
+<ResponseField name="new_from_signer" type="(signer: &dyn Signer, public_seed: &[u8]) -> Result<Self>">
+  Deterministically derives a keypair from a Solana signer and public seed.
+  
+  ```rust
+  use solana_signer::Signer;
+  
+  let keypair = ElGamalKeypair::new_from_signer(&signer, b"seed")?;
+  ```
+</ResponseField>
+
+<ResponseField name="pubkey" type="(&self) -> &ElGamalPubkey">
+  Returns a reference to the public key.
+  
+  ```rust
+  let pubkey = keypair.pubkey();
+  ```
+</ResponseField>
+
+<ResponseField name="secret" type="(&self) -> &ElGamalSecretKey">
+  Returns a reference to the secret key.
+  
+  ```rust
+  let secret = keypair.secret();
+  ```
+</ResponseField>
+
+<ResponseField name="read_json_file" type="<F: AsRef<Path>>(path: F) -> Result<Self>">
+  Reads a keypair from a JSON file.
+  
+  ```rust
+  let keypair = ElGamalKeypair::read_json_file("keypair.json")?;
+  ```
+</ResponseField>
+
+<ResponseField name="write_json_file" type="<F: AsRef<Path>>(&self, path: F) -> Result<String>">
+  Writes the keypair to a JSON file.
+  
+  ```rust
+  keypair.write_json_file("keypair.json")?;
+  ```
+</ResponseField>
+
+### ElGamalPubkey
+
+ElGamal public key for encryption.
+
+#### Methods
+
+<ResponseField name="encrypt" type="<T: Into<Scalar>>(&self, amount: T) -> ElGamalCiphertext">
+  Encrypts a value using randomized encryption.
+  
+  ```rust
+  let ciphertext = pubkey.encrypt(100_u64);
+  ```
+</ResponseField>
+
+<ResponseField name="encrypt_with" type="<T: Into<Scalar>>(&self, amount: T, opening: &PedersenOpening) -> ElGamalCiphertext">
+  Encrypts a value using a specific Pedersen opening.
+  
+  ```rust
+  let opening = PedersenOpening::new_rand();
+  let ciphertext = pubkey.encrypt_with(100_u64, &opening);
+  ```
+</ResponseField>
+
+<ResponseField name="decrypt_handle" type="(&self, opening: &PedersenOpening) -> DecryptHandle">
+  Generates a decrypt handle for a Pedersen opening.
+  
+  ```rust
+  let opening = PedersenOpening::new_rand();
+  let handle = pubkey.decrypt_handle(&opening);
+  ```
+</ResponseField>
+
+<ResponseField name="to_bytes" type="(&self) -> [u8; 32]">
+  Serializes the public key to bytes.
+  
+  ```rust
+  let bytes = pubkey.to_bytes();
+  ```
+</ResponseField>
+
+<ResponseField name="from_bytes" type="(bytes: &[u8]) -> Option<Self>">
+  Deserializes a public key from bytes.
+  
+  ```rust
+  let pubkey = ElGamalPubkey::from_bytes(&bytes)?;
+  ```
+</ResponseField>
+
+### ElGamalSecretKey
+
+ElGamal secret key for decryption. Instances are zeroized on drop.
+
+#### Methods
+
+<ResponseField name="new_rand" type="() -> Self">
+  Randomly samples a secret key.
+  
+  ```rust
+  let secret = ElGamalSecretKey::new_rand();
+  ```
+</ResponseField>
+
+<ResponseField name="from_seed" type="(seed: &[u8]) -> Result<Self>">
+  Derives a secret key from an entropy seed (minimum 32 bytes).
+  
+  ```rust
+  let secret = ElGamalSecretKey::from_seed(&seed)?;
+  ```
+</ResponseField>
+
+<ResponseField name="decrypt" type="(&self, ciphertext: &ElGamalCiphertext) -> DiscreteLog">
+  Decrypts a ciphertext, returning a discrete log instance.
+  
+  ```rust
+  let discrete_log = secret.decrypt(&ciphertext);
+  ```
+</ResponseField>
+
+<ResponseField name="decrypt_u32" type="(&self, ciphertext: &ElGamalCiphertext) -> Option<u64>">
+  Decrypts a ciphertext as a 32-bit number.
+  
+  <Warning>
+    This function is not constant time and should only be used for small values.
+  </Warning>
+  
+  ```rust
+  if let Some(amount) = secret.decrypt_u32(&ciphertext) {
+      println!("Amount: {}", amount);
+  }
+  ```
+</ResponseField>
+
+### ElGamalCiphertext
+
+A twisted ElGamal ciphertext consisting of a Pedersen commitment and decrypt handle.
+
+#### Structure
+
+<ResponseField name="commitment" type="PedersenCommitment">
+  The Pedersen commitment encoding the encrypted message
+</ResponseField>
+
+<ResponseField name="handle" type="DecryptHandle">
+  The decrypt handle binding the commitment to a public key
+</ResponseField>
+
+#### Methods
+
+<ResponseField name="decrypt" type="(&self, secret: &ElGamalSecretKey) -> DiscreteLog">
+  Decrypts the ciphertext using a secret key.
+  
+  ```rust
+  let discrete_log = ciphertext.decrypt(secret);
+  ```
+</ResponseField>
+
+<ResponseField name="to_bytes" type="(&self) -> [u8; 64]">
+  Serializes the ciphertext to bytes.
+  
+  ```rust
+  let bytes = ciphertext.to_bytes();
+  ```
+</ResponseField>
+
+<ResponseField name="from_bytes" type="(bytes: &[u8]) -> Option<Self>">
+  Deserializes a ciphertext from bytes.
+  
+  ```rust
+  let ciphertext = ElGamalCiphertext::from_bytes(&bytes)?;
+  ```
+</ResponseField>
+
+#### Homomorphic Operations
+
+ElGamal ciphertexts support homomorphic addition and scalar multiplication:
+
+```rust
+use curve25519_dalek::scalar::Scalar;
+
+let ct1 = pubkey.encrypt(10_u64);
+let ct2 = pubkey.encrypt(20_u64);
+
+// Homomorphic addition: encrypts 30
+let sum = ct1 + ct2;
+
+// Homomorphic subtraction: encrypts -10
+let diff = ct1 - ct2;
+
+// Scalar multiplication: encrypts 50
+let scaled = ct1 * Scalar::from(5_u64);
+```
+
+## Pedersen Commitments
+
+### Base Points
+
+<ParamField path="G" type="RistrettoPoint">
+  Pedersen base point for encoding messages (`RISTRETTO_BASEPOINT_POINT`)
+</ParamField>
+
+<ParamField path="H" type="RistrettoPoint">
+  Pedersen base point for encoding openings (derived from hashing `G`)
+</ParamField>
+
+### Pedersen
+
+Algorithm handle for Pedersen commitments.
+
+#### Methods
+
+<ResponseField name="new" type="<T: Into<Scalar>>(amount: T) -> (PedersenCommitment, PedersenOpening)">
+  Creates a commitment with a random opening.
+  
+  ```rust
+  use solana_zk_sdk::encryption::pedersen::Pedersen;
+  
+  let (commitment, opening) = Pedersen::new(100_u64);
+  ```
+</ResponseField>
+
+<ResponseField name="with" type="<T: Into<Scalar>>(amount: T, opening: &PedersenOpening) -> PedersenCommitment">
+  Creates a commitment with a specific opening.
+  
+  ```rust
+  let opening = PedersenOpening::new_rand();
+  let commitment = Pedersen::with(100_u64, &opening);
+  ```
+</ResponseField>
+
+### PedersenCommitment
+
+A Pedersen commitment to a value.
+
+#### Methods
+
+<ResponseField name="get_point" type="(&self) -> &RistrettoPoint">
+  Returns the underlying Ristretto point.
+  
+  ```rust
+  let point = commitment.get_point();
+  ```
+</ResponseField>
+
+<ResponseField name="to_bytes" type="(&self) -> [u8; 32]">
+  Serializes the commitment to bytes.
+  
+  ```rust
+  let bytes = commitment.to_bytes();
+  ```
+</ResponseField>
+
+### PedersenOpening
+
+A Pedersen opening (randomness). Instances are zeroized on drop.
+
+#### Methods
+
+<ResponseField name="new_rand" type="() -> Self">
+  Generates a random opening.
+  
+  ```rust
+  use solana_zk_sdk::encryption::pedersen::PedersenOpening;
+  
+  let opening = PedersenOpening::new_rand();
+  ```
+</ResponseField>
+
+<ResponseField name="get_scalar" type="(&self) -> &Scalar">
+  Returns the underlying scalar value.
+  
+  ```rust
+  let scalar = opening.get_scalar();
+  ```
+</ResponseField>
+
+<ResponseField name="as_bytes" type="(&self) -> &[u8; 32]">
+  Returns the opening as bytes.
+  
+  ```rust
+  let bytes = opening.as_bytes();
+  ```
+</ResponseField>
+
+## Example: Complete Encryption Flow
+
+```rust
+use solana_zk_sdk::encryption::{
+    elgamal::{ElGamalKeypair, ElGamalCiphertext},
+    pedersen::{Pedersen, PedersenOpening},
+};
+
+// Generate keypair
+let keypair = ElGamalKeypair::new_rand();
+
+// Encrypt a value
+let amount = 100_u64;
+let ciphertext = keypair.pubkey().encrypt(amount);
+
+// Decrypt
+if let Some(decrypted) = keypair.secret().decrypt_u32(&ciphertext) {
+    assert_eq!(decrypted, amount);
+}
+
+// Homomorphic operations
+let ct1 = keypair.pubkey().encrypt(10_u64);
+let ct2 = keypair.pubkey().encrypt(20_u64);
+let sum = ct1 + ct2;
+
+if let Some(result) = keypair.secret().decrypt_u32(&sum) {
+    assert_eq!(result, 30);
+}
+```

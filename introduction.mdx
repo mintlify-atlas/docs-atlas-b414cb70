@@ -1,0 +1,107 @@
+---
+title: "Introduction"
+description: "Welcome to the ZK ElGamal Proof SDK - create and verify zero-knowledge proofs on encrypted data for Solana"
+---
+
+## What is the ZK ElGamal Proof SDK?
+
+The ZK ElGamal Proof SDK is a comprehensive toolkit for creating and verifying zero-knowledge proofs on encrypted data within the Solana ecosystem. Built on twisted ElGamal encryption and Curve25519, it enables privacy-preserving computations on encrypted values without revealing the underlying data.
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Twisted ElGamal Encryption" icon="lock">
+    Encrypt data directly as Pedersen commitments, enabling efficient proof systems while maintaining cryptographic security on Curve25519.
+  </Card>
+  <Card title="Zero-Knowledge Proofs" icon="shield-check">
+    Create and verify proofs about encrypted data without revealing the underlying values, including range proofs, equality proofs, and validity proofs.
+  </Card>
+  <Card title="Multi-Platform Support" icon="code">
+    Available for Rust native development and JavaScript/TypeScript via WebAssembly, supporting Node.js, browsers, and bundlers.
+  </Card>
+  <Card title="Solana Integration" icon="link">
+    Native support for Solana programs with proof verification capabilities and seamless integration with the Solana SDK.
+  </Card>
+</CardGroup>
+
+## Core Capabilities
+
+The SDK provides cryptographic primitives and proof systems for:
+
+- **ElGamal Encryption**: Twisted ElGamal encryption scheme with support for homomorphic operations
+- **Pedersen Commitments**: Cryptographic commitments for hiding values while enabling proofs
+- **Public Key Validity Proofs**: Prove knowledge of the secret key corresponding to a public key
+- **Ciphertext Equality Proofs**: Prove two ciphertexts encrypt the same value
+- **Range Proofs**: Prove encrypted values fall within specific ranges
+- **Batched Proofs**: Efficiently verify multiple proofs simultaneously
+
+## Architecture
+
+The SDK is organized into two main packages:
+
+### Rust Package (`solana-zk-sdk`)
+
+The core implementation providing:
+- Encryption primitives (ElGamal, Pedersen)
+- Sigma protocols for zero-knowledge proofs
+- Range proof system using bulletproofs
+- Transcript management for Fiat-Shamir transformation
+- Solana program integration
+
+**Crate**: `solana-zk-sdk` v5.0.1  
+**Repository**: https://github.com/solana-program/zk-elgamal-proof
+
+### JavaScript Package (`@solana/zk-sdk`)
+
+WebAssembly bindings exposing:
+- ElGamal encryption and decryption
+- Keypair generation and management
+- Proof generation and verification
+- Support for Node.js, web, and bundler environments
+
+**Package**: `@solana/zk-sdk` v0.3.0  
+**NPM**: https://www.npmjs.com/package/@solana/zk-sdk
+
+## Use Cases
+
+<AccordionGroup>
+  <Accordion title="Confidential Transactions">
+    Build privacy-preserving payment systems where transaction amounts are encrypted but can be verified for correctness without revealing values.
+  </Accordion>
+  <Accordion title="Private DeFi Applications">
+    Create decentralized finance applications with encrypted balances, private trading, and confidential voting mechanisms.
+  </Accordion>
+  <Accordion title="Compliance Proofs">
+    Prove regulatory compliance (e.g., values within permitted ranges) without disclosing sensitive financial information.
+  </Accordion>
+  <Accordion title="Encrypted State Management">
+    Maintain encrypted program state on Solana while enabling authorized operations through zero-knowledge proofs.
+  </Accordion>
+</AccordionGroup>
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install the SDK for Rust or JavaScript and set up your development environment.
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Create your first ElGamal keypair and generate a zero-knowledge proof in minutes.
+  </Card>
+</CardGroup>
+
+## Security Considerations
+
+The SDK implements cryptographic protocols that require careful usage:
+
+<Warning>
+  The discrete logarithm problem for small values is computationally feasible. Only encrypt values where decryption complexity is acceptable for your use case.
+</Warning>
+
+<Info>
+  All proofs use the transcript domain separator `solana-zk-elgamal-proof-program-v1`. This MUST be changed for any fork or separate deployment to prevent cross-chain proof replay attacks.
+</Info>
+
+## License
+
+This project is licensed under Apache-2.0 and maintained by Anza Maintainers.

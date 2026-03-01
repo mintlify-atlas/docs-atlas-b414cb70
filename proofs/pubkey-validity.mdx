@@ -1,0 +1,159 @@
+---
+title: "Public Key Validity Proof"
+description: "Proves that an ElGamal public key is well-formed and the prover knows the corresponding secret key"
+---
+
+## Overview
+
+The public key validity proof certifies that a given ElGamal public key is valid - specifically, that the prover knows the corresponding secret key. This proof is essential for establishing that a public key was generated correctly and not arbitrarily chosen.
+
+The protocol guarantees **computational soundness** and **perfect zero-knowledge** in the random oracle model.
+
+<Note>
+  This proof verifies the discrete logarithm relationship between the public key and the base point H, demonstrating knowledge of the secret key without revealing it.
+</Note>
+
+## Proof Structure
+
+The `PubkeyValidityProof` is remarkably compact with only two components:
+
+<ParamField path="Y" type="CompressedRistretto">
+  Commitment to the random masking factor: `Y = y * H`
+</ParamField>
+
+<ParamField path="z" type="Scalar">
+  The masked inverse of the secret key: `z = c * s^(-1) + y`
+</ParamField>
+
+## Proof Data Context
+
+```rust
+pub struct PubkeyValidityProofContext {
+    pub pubkey: PodElGamalPubkey, // 32 bytes
+}
+```
+
+## Generating a Proof
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::proof_data::PubkeyValidityProofData,
+};
+
+// Generate a random ElGamal keypair
+let keypair = ElGamalKeypair::new_rand();
+
+// Generate proof that the public key is valid
+let proof_data = PubkeyValidityProofData::new(&keypair)?;
+
+// Verify the proof
+assert!(proof_data.verify_proof().is_ok());
+```
+
+## Deriving Keys from Signers
+
+You can also prove validity of derived keys:
+
+```rust
+use solana_address::Address;
+use solana_keypair::Keypair;
+
+// Derive ElGamal keypair from a signer
+let signer = Keypair::new();
+let address = Address::default();
+let elgamal_keypair = ElGamalKeypair::new_from_signer(
+    &signer,
+    address.as_ref(),
+)?;
+
+// Prove the derived key is valid
+let proof_data = PubkeyValidityProofData::new(&elgamal_keypair)?;
+```
+
+## Verification
+
+The verification checks the algebraic relation:
+
+```
+z * H - c * P = Y
+```
+
+Where:
+- `H` is the Pedersen commitment base point
+- `P` is the ElGamal public key being verified
+- `c` is the challenge scalar from the transcript
+- `z` and `Y` are from the proof
+
+This relation holds if and only if `P = s * H` for some secret scalar `s` known to the prover.
+
+<Warning>
+  The verification explicitly rejects identity public keys, even if the algebraic relation holds. This prevents trivial proofs for invalid keys.
+</Warning>
+
+## Use Cases
+
+- **Key registration**: Proving a public key is well-formed when registering it on-chain
+- **Account creation**: Validating ElGamal public keys during confidential account setup
+- **Key rotation**: Proving new public keys are properly generated
+- **Multi-signature setups**: Verifying all participants have valid keys
+- **Token account initialization**: Ensuring confidential token accounts have valid encryption keys
+
+## Security Considerations
+
+<Warning>
+  The prover must know the secret key `s` such that `P = s * H`. The proof generation will panic if the secret key is zero or not invertible.
+</Warning>
+
+### Why Inverse?
+
+Unlike other proofs that mask the secret key as `z = c*s + y`, this proof uses the **inverse**: `z = c*s^(-1) + y`. This design prevents certain attacks where an adversary could verify relations without knowing the actual secret key.
+
+## Proof Size
+
+Total size: **64 bytes** (2 × 32 bytes)
+- 1 Ristretto point (32 bytes)
+- 1 scalar (32 bytes)
+
+This is one of the most compact proofs in the ZK ElGamal proof system.
+
+## Implementation Notes
+
+From the source code (`sigma_proofs/pubkey_validity.rs:58`):
+
+```rust
+pub fn new(elgamal_keypair: &ElGamalKeypair, transcript: &mut Transcript) -> Self {
+    let s = elgamal_keypair.secret().get_scalar();
+    
+    // Panics if secret key is zero
+    assert!(s != &Scalar::ZERO);
+    let mut s_inv = s.invert();
+    
+    // Generate random masking factor
+    let mut y = Scalar::random(&mut OsRng);
+    let Y = (&y * &(*H)).compress();
+    
+    transcript.append_point(b"Y", &Y);
+    let c = transcript.challenge_scalar(b"c");
+    
+    // Compute masked inverse secret key
+    let z = &(&c * s_inv) + &y;
+    
+    // Zeroize sensitive data
+    s_inv.zeroize();
+    y.zeroize();
+    
+    Self { Y, z }
+}
+```
+
+## Related Proofs
+
+- [Grouped Ciphertext Validity](/proofs/grouped-ciphertext-validity): Proves ciphertexts can be decrypted with valid keys
+- [Zero-Ciphertext](/proofs/zero-ciphertext): Proves knowledge of secret key for a specific ciphertext
+
+## Source Code
+
+Sigma proof implementation: `zk-sdk/src/sigma_proofs/pubkey_validity.rs:40`
+
+Proof data structure: `zk-sdk/src/zk_elgamal_proof_program/proof_data/pubkey_validity.rs:35`

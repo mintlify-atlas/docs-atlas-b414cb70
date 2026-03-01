@@ -1,0 +1,160 @@
+---
+title: 'verifyZeroCiphertext'
+description: 'Verify that an ElGamal ciphertext encrypts zero'
+---
+
+## Overview
+
+The `verifyZeroCiphertext` function creates instructions to verify that an ElGamal ciphertext encrypts the value zero. This is useful for proving that a balance has been fully depleted or that no value is being transferred.
+
+## Function Signature
+
+```typescript
+async function verifyZeroCiphertext({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyZeroCiphertextArgs): Promise<Instruction[]>
+```
+
+## Parameters
+
+<ParamField path="rpc" type="Rpc<GetMinimumBalanceForRentExemptionApi>" required>
+  Solana RPC client with rent exemption API support
+</ParamField>
+
+<ParamField path="payer" type="TransactionSigner" required>
+  Transaction signer that will pay for the account creation fees
+</ParamField>
+
+<ParamField path="proofData" type="ProofDataInput" required>
+  The zero-ciphertext proof data. Can be either:
+  - `Uint8Array` - Raw proof bytes for ephemeral verification
+  - `{ account: Address; offset: number }` - Reference to proof data stored in a record account
+</ParamField>
+
+<ParamField path="contextState" type="ContextStateArgs" optional>
+  Optional context state configuration for storing the verified proof on-chain:
+  - `contextAccount: KeyPairSigner` - New account to store the proof
+  - `authority: Address` - Authority that can close the context account
+</ParamField>
+
+<ParamField path="programId" type="Address" optional>
+  ZK ElGamal Proof program address. Defaults to `ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS`
+</ParamField>
+
+## Returns
+
+`Promise<Instruction[]>` - Array of instructions to execute:
+1. Create context account instruction (if `contextState` is provided)
+2. Verify zero-ciphertext proof instruction
+
+## Usage Examples
+
+### Ephemeral Verification (No Context State)
+
+Verify the proof within a transaction without storing it on-chain:
+
+```typescript
+import { verifyZeroCiphertext } from '@solana/zk-elgamal-proof';
+import { ElGamalKeypair, ZeroCiphertextProofData } from '@solana/zk-sdk/node';
+
+// Generate a valid zero-ciphertext proof
+const keypair = new ElGamalKeypair();
+const ciphertext = keypair.pubkey().encryptU64(0n);
+const proof = new ZeroCiphertextProofData(keypair, ciphertext);
+const proofData = proof.toBytes();
+
+// Verify ephemerally (proof is discarded after transaction)
+const ixs = await verifyZeroCiphertext({
+  rpc: client.rpc,
+  payer,
+  proofData,
+  // contextState is undefined
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+```
+
+### With Context State Storage
+
+Store the verified proof on-chain for later use:
+
+```typescript
+import { generateKeyPairSigner } from '@solana/kit';
+
+const contextAccount = await generateKeyPairSigner();
+
+const ixs = await verifyZeroCiphertext({
+  rpc: client.rpc,
+  payer,
+  proofData,
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+// Context state account now exists and stores the verified proof
+```
+
+### Using Proof from Record Account
+
+Reference proof data stored in a record account:
+
+```typescript
+import { createRecord, createWriteInstruction, RECORD_META_DATA_SIZE } from '@solana-program/record';
+
+// Initialize and write proof to record account
+const recordAuthority = await generateKeyPairSigner();
+const { recordKeypair, ixs: initIxs } = await createRecord({
+  rpc: client.rpc,
+  payer,
+  authority: recordAuthority.address,
+  dataLength: BigInt(proofData.length),
+});
+
+const writeIx = createWriteInstruction({
+  recordAccount: recordKeypair.address,
+  authority: recordAuthority,
+  offset: 0n,
+  data: proofData,
+});
+
+await sendAndConfirmInstructions(client, payer, [...initIxs, writeIx]);
+
+// Verify using record account reference
+const verifyIxs = await verifyZeroCiphertext({
+  rpc: client.rpc,
+  payer,
+  proofData: {
+    account: recordKeypair.address,
+    offset: Number(RECORD_META_DATA_SIZE),
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, verifyIxs);
+```
+
+## Notes
+
+<Note>
+  **Ephemeral vs Persistent Verification**
+  
+  - Without `contextState`: The proof is verified within the transaction and discarded
+  - With `contextState`: The proof is stored on-chain and can be referenced by other programs
+</Note>
+
+<Warning>
+  **Invalid Proof Data**
+  
+  If the proof data is invalid or does not correctly prove that the ciphertext encrypts zero, the transaction will fail during execution.
+</Warning>
+
+## Related Functions
+
+- [`closeContextStateProof`](/javascript/actions/close-context) - Close a context state account and reclaim rent
+- [`verifyCiphertextCiphertextEquality`](/javascript/actions/verify-ciphertext-equality) - Verify two ciphertexts encrypt the same value

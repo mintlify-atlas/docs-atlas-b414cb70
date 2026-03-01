@@ -1,0 +1,214 @@
+---
+title: "solana-zk-keygen CLI"
+description: "Generate and manage encryption keys for confidential transactions"
+---
+
+## Overview
+
+The `solana-zk-keygen` is a command-line utility for generating and managing privacy-related encryption keys used in the SPL Token-2022 program. It supports two types of encryption keys:
+
+- **ElGamal keypair**: Used for public key encryption in confidential transfers
+- **AES128 key**: Used for authenticated symmetric encryption (e.g., AES-GCM-SIV)
+
+## Installation
+
+The tool is included in the Solana ZK SDK. Build from source:
+
+```bash
+cargo build --release --bin solana-zk-keygen
+```
+
+## Commands
+
+### new
+
+Generate a new encryption key/keypair from a random seed phrase and optional BIP39 passphrase.
+
+```bash
+solana-zk-keygen new <TYPE> [OPTIONS]
+```
+
+**Arguments:**
+
+- `<TYPE>` - The type of encryption key: `elgamal` or `aes128`
+
+**Options:**
+
+- `-o, --outfile <FILEPATH>` - Path to generated file (default: `~/.config/solana/elgamal.json` or `~/.config/solana/aes128.json`)
+- `--force` - Overwrite the output file if it exists
+- `--silent` - Do not display seed phrase (useful when piping to other programs)
+- `--no-outfile` - Do not write to a file (cannot be used with `--outfile` or `--silent`)
+- `--word-count <NUMBER>` - Specify the number of words for the seed phrase (12, 15, 18, 21, 24)
+- `--language <LANGUAGE>` - Specify the language for the seed phrase
+- `--no-bip39-passphrase` - Do not prompt for a BIP39 passphrase
+
+**Examples:**
+
+```bash
+# Generate a new ElGamal keypair
+solana-zk-keygen new elgamal
+```
+
+```bash
+# Generate a new AES128 key with custom output path
+solana-zk-keygen new aes128 --outfile ./my-aes-key.json
+```
+
+```bash
+# Generate ElGamal keypair without passphrase
+solana-zk-keygen new elgamal --no-bip39-passphrase
+```
+
+```bash
+# Generate key without saving to file
+solana-zk-keygen new elgamal --no-outfile --no-bip39-passphrase
+```
+
+**Output Example:**
+
+```
+Generating a new ElGamal keypair
+Wrote new ElGamal keypair to /home/user/.config/solana/elgamal.json
+===============================================
+pubkey: 5xJ7h3nW8qP2mK4vL9rT6sU1wY3zX8cD4bF7eG9hA2iB
+===============================================
+Save this seed phrase to recover your new ElGamal keypair:
+word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12
+===============================================
+```
+
+### pubkey
+
+Display the public key from an ElGamal keypair file.
+
+```bash
+solana-zk-keygen pubkey elgamal [KEYPAIR] [OPTIONS]
+```
+
+**Arguments:**
+
+- `elgamal` - The type of keypair (currently only ElGamal is supported)
+- `[KEYPAIR]` - Filepath or URL to a keypair (default: `~/.config/solana/elgamal.json`)
+
+**Options:**
+
+- `--skip-seed-phrase-validation` - Skip seed phrase validation
+
+**Examples:**
+
+```bash
+# Display public key from default location
+solana-zk-keygen pubkey elgamal
+```
+
+```bash
+# Display public key from custom path
+solana-zk-keygen pubkey elgamal ./my-keypair.json
+```
+
+**Output Example:**
+
+```
+5xJ7h3nW8qP2mK4vL9rT6sU1wY3zX8cD4bF7eG9hA2iB
+```
+
+### recover
+
+Recover a keypair from a seed phrase and optional BIP39 passphrase.
+
+```bash
+solana-zk-keygen recover <TYPE> [KEYPAIR] [OPTIONS]
+```
+
+**Arguments:**
+
+- `<TYPE>` - The type of keypair: `elgamal` or `aes128`
+- `[KEYPAIR]` - `prompt:` URI scheme or `ASK` keyword to prompt for seed phrase
+
+**Options:**
+
+- `-o, --outfile <FILEPATH>` - Path to generated file
+- `--force` - Overwrite the output file if it exists
+- `--skip-seed-phrase-validation` - Skip seed phrase validation
+
+**Examples:**
+
+```bash
+# Recover ElGamal keypair (will prompt for seed phrase)
+solana-zk-keygen recover elgamal
+```
+
+```bash
+# Recover AES128 key with custom output
+solana-zk-keygen recover aes128 --outfile ./recovered-key.json
+```
+
+```bash
+# Recover with explicit prompt
+solana-zk-keygen recover elgamal prompt: --outfile ./keypair.json
+```
+
+**Output Example:**
+
+```
+Wrote recovered ElGamal keypair to /home/user/.config/solana/elgamal.json
+```
+
+## Key Types
+
+### ElGamal Keypair
+
+ElGamal keypairs are used for public key encryption in confidential transfers. They consist of:
+
+- **Private key**: Used to decrypt confidential transaction amounts
+- **Public key**: Shared publicly to receive confidential transfers
+
+Default file location: `~/.config/solana/elgamal.json`
+
+### AES128 Key
+
+AES128 keys are used for authenticated symmetric encryption (AES-GCM-SIV). These keys provide:
+
+- Fast symmetric encryption
+- Authentication guarantees
+- Protection against replay attacks
+
+Default file location: `~/.config/solana/aes128.json`
+
+## Common Use Cases
+
+### Setting Up Confidential Transfers
+
+1. Generate an ElGamal keypair for receiving confidential transfers:
+
+```bash
+solana-zk-keygen new elgamal --no-bip39-passphrase
+```
+
+2. Save the seed phrase securely
+3. Use the public key when configuring confidential transfers
+
+### Backing Up Keys
+
+Always save your seed phrase securely. If you lose access to your key file, you can recover it:
+
+```bash
+solana-zk-keygen recover elgamal
+```
+
+### Using Multiple Keys
+
+Generate keys with custom paths to manage multiple identities:
+
+```bash
+solana-zk-keygen new elgamal --outfile ~/.config/solana/elgamal-personal.json
+solana-zk-keygen new elgamal --outfile ~/.config/solana/elgamal-business.json
+```
+
+## Security Considerations
+
+<Warning>
+  Never share your private keys or seed phrases. Anyone with access to these can decrypt your confidential transaction data.
+</Warning>
+
+See [Key Management Best Practices](/tools/key-management) for detailed security guidance.

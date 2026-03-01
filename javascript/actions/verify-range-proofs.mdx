@@ -1,0 +1,264 @@
+---
+title: 'Range Proof Verification'
+description: 'Verify batched range proofs for U64, U128, and U256 values'
+---
+
+## Overview
+
+Range proof verification functions create instructions to verify that encrypted values fall within specific bit ranges without revealing the actual values. These proofs are batched for efficiency and support different integer sizes.
+
+## Available Functions
+
+### verifyBatchedRangeProofU64
+
+Verifies range proofs for values up to 64 bits.
+
+```typescript
+async function verifyBatchedRangeProofU64({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyBatchedRangeProofU64Args): Promise<Instruction[]>
+```
+
+### verifyBatchedRangeProofU128
+
+Verifies range proofs for values up to 128 bits.
+
+```typescript
+async function verifyBatchedRangeProofU128({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyBatchedRangeProofU128Args): Promise<Instruction[]>
+```
+
+### verifyBatchedRangeProofU256
+
+Verifies range proofs for values up to 256 bits.
+
+```typescript
+async function verifyBatchedRangeProofU256({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyBatchedRangeProofU256Args): Promise<Instruction[]>
+```
+
+## Parameters
+
+All three functions share the same parameter structure:
+
+<ParamField path="rpc" type="Rpc<GetMinimumBalanceForRentExemptionApi>" required>
+  Solana RPC client with rent exemption API support
+</ParamField>
+
+<ParamField path="payer" type="TransactionSigner" required>
+  Transaction signer that will pay for the account creation fees
+</ParamField>
+
+<ParamField path="proofData" type="ProofDataInput" required>
+  The batched range proof data. Can be either:
+  - `Uint8Array` - Raw proof bytes for ephemeral verification
+  - `{ account: Address; offset: number }` - Reference to proof data stored in a record account
+</ParamField>
+
+<ParamField path="contextState" type="ContextStateArgs" optional>
+  Optional context state configuration for storing the verified proof on-chain:
+  - `contextAccount: KeyPairSigner` - New account to store the proof
+  - `authority: Address` - Authority that can close the context account
+</ParamField>
+
+<ParamField path="programId" type="Address" optional>
+  ZK ElGamal Proof program address. Defaults to `ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS`
+</ParamField>
+
+## Returns
+
+`Promise<Instruction[]>` - Array of instructions to execute:
+1. Create context account instruction (if `contextState` is provided)
+2. Verify batched range proof instruction
+
+## Usage Examples
+
+### Basic U64 Range Proof Verification
+
+Verify that multiple values are within specified bit ranges:
+
+```typescript
+import { verifyBatchedRangeProofU64 } from '@solana/zk-elgamal-proof';
+import {
+  BatchedRangeProofU64Data,
+  PedersenCommitment,
+  PedersenOpening,
+} from '@solana/zk-sdk/node';
+
+// Create commitments for two values with different bit lengths
+const amount1 = 255n; // 8-bit value
+const amount2 = (1n << 56n) - 1n; // 56-bit value
+
+const opening1 = new PedersenOpening();
+const opening2 = new PedersenOpening();
+
+const commitment1 = PedersenCommitment.from(amount1, opening1);
+const commitment2 = PedersenCommitment.from(amount2, opening2);
+
+const commitments = [commitment1, commitment2];
+const amounts = new BigUint64Array([amount1, amount2]);
+const bitLengths = new Uint8Array([8, 56]);
+const openings = [opening1, opening2];
+
+// Generate batched range proof
+const proof = new BatchedRangeProofU64Data(
+  commitments,
+  amounts,
+  bitLengths,
+  openings,
+);
+
+// Verify ephemerally
+const ixs = await verifyBatchedRangeProofU64({
+  rpc: client.rpc,
+  payer,
+  proofData: proof.toBytes(),
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+```
+
+### With Context State Storage
+
+Store the verified proof on-chain (requires separate transactions for large proofs):
+
+```typescript
+import { generateKeyPairSigner } from '@solana/kit';
+
+const contextAccount = await generateKeyPairSigner();
+
+const ixs = await verifyBatchedRangeProofU64({
+  rpc: client.rpc,
+  payer,
+  proofData: proof.toBytes(),
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+// Large proofs may need to be sent in separate transactions
+const createIx = ixs[0];
+const verifyIx = ixs[1];
+
+// Create context account
+await sendAndConfirmInstructions(client, payer, [createIx]);
+
+// Verify proof
+await sendAndConfirmInstructions(client, payer, [verifyIx]);
+```
+
+### Using Record Account for Large Proofs
+
+For large proofs, store them in a record account first:
+
+```typescript
+import {
+  createRecord,
+  createWriteInstruction,
+  RECORD_META_DATA_SIZE,
+  RECORD_CHUNK_SIZE_POST_INITIALIZE,
+} from '@solana-program/record';
+
+const proofData = proof.toBytes();
+
+// Initialize record account
+const recordAuthority = await generateKeyPairSigner();
+const { recordKeypair, ixs: initIxs } = await createRecord({
+  rpc: client.rpc,
+  payer,
+  authority: recordAuthority.address,
+  dataLength: BigInt(proofData.length),
+});
+
+await sendAndConfirmInstructions(client, payer, initIxs);
+
+// Write proof in chunks
+let offset = 0;
+while (offset < proofData.length) {
+  const chunkEnd = Math.min(
+    offset + RECORD_CHUNK_SIZE_POST_INITIALIZE,
+    proofData.length
+  );
+  const chunk = proofData.slice(offset, chunkEnd);
+
+  const writeIx = createWriteInstruction({
+    recordAccount: recordKeypair.address,
+    authority: recordAuthority,
+    offset: BigInt(offset),
+    data: chunk,
+  });
+
+  await sendAndConfirmInstructions(client, payer, [writeIx]);
+  offset += RECORD_CHUNK_SIZE_POST_INITIALIZE;
+}
+
+// Verify using record account
+const verifyIxs = await verifyBatchedRangeProofU64({
+  rpc: client.rpc,
+  payer,
+  proofData: {
+    account: recordKeypair.address,
+    offset: Number(RECORD_META_DATA_SIZE),
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, verifyIxs);
+```
+
+## Notes
+
+<Note>
+  **Batched Proofs**
+  
+  These functions verify multiple range proofs in a single operation for efficiency. Each proof in the batch can have a different bit length constraint.
+</Note>
+
+<Note>
+  **Choosing the Right Function**
+  
+  - Use `verifyBatchedRangeProofU64` for values up to 64 bits
+  - Use `verifyBatchedRangeProofU128` for values up to 128 bits
+  - Use `verifyBatchedRangeProofU256` for values up to 256 bits
+</Note>
+
+<Warning>
+  **Large Proof Data**
+  
+  Range proofs can be large and may exceed transaction size limits. For large proofs:
+  - Use record accounts to store proof data
+  - Send create and verify instructions in separate transactions
+  - Write proof data to record accounts in chunks
+</Warning>
+
+<Warning>
+  **Invalid Proof Data**
+  
+  If the proof data is invalid or any value exceeds its claimed bit range, the transaction will fail during execution.
+</Warning>
+
+## Use Cases
+
+- Proving token amounts are within valid ranges without revealing exact amounts
+- Verifying confidential transfer amounts are non-negative
+- Ensuring encrypted balances don't overflow
+- Batch verification of multiple range constraints for efficiency
+
+## Related Functions
+
+- [`verifyZeroCiphertext`](/javascript/actions/verify-zero-ciphertext) - Verify a ciphertext encrypts zero
+- [`closeContextStateProof`](/javascript/actions/close-context) - Close a context state account

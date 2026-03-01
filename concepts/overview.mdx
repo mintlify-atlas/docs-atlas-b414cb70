@@ -1,0 +1,227 @@
+---
+title: "Core Concepts Overview"
+description: "Understanding the cryptographic foundations of the ZK ElGamal Proof SDK"
+---
+
+The ZK ElGamal Proof SDK is built on a sophisticated cryptographic foundation that combines encryption, commitments, and zero-knowledge proofs to enable confidential transactions on Solana. This section explains the core concepts that power the SDK.
+
+## Cryptographic Building Blocks
+
+The SDK is built on three fundamental cryptographic primitives:
+
+<CardGroup cols={3}>
+  <Card title="ElGamal Encryption" icon="lock" href="/concepts/elgamal-encryption">
+    Twisted ElGamal encryption scheme for confidential amounts
+  </Card>
+  <Card title="Pedersen Commitments" icon="shield" href="/concepts/pedersen-commitments">
+    Cryptographic commitments with homomorphic properties
+  </Card>
+  <Card title="Zero-Knowledge Proofs" icon="fingerprint" href="/concepts/zero-knowledge-proofs">
+    Proving statements without revealing sensitive data
+  </Card>
+</CardGroup>
+
+## The Ristretto Group on Curve25519
+
+All cryptographic operations in the SDK are performed over the **Ristretto** prime-order group representation of Curve25519. This provides:
+
+- **Security**: 128-bit security level
+- **Performance**: Fast group operations optimized for modern processors
+- **Prime-order group**: Eliminates cofactor-related vulnerabilities
+- **Canonical encoding**: Each group element has exactly one valid encoding
+
+The SDK uses the [`curve25519-dalek`](https://docs.rs/curve25519-dalek/latest/curve25519_dalek/ristretto/index.html) implementation for all elliptic curve operations.
+
+<Info>
+The Ristretto group was specifically designed to provide a clean, prime-order group abstraction over Curve25519, eliminating many of the pitfalls associated with cofactor handling in Edwards curves.
+</Info>
+
+## Base Points and Constants
+
+The SDK defines two fundamental base points used throughout the cryptographic operations:
+
+```rust
+/// Pedersen base point for encoding messages (from zk-sdk/src/encryption/pedersen.rs:20-25)
+pub const G: RistrettoPoint = RISTRETTO_BASEPOINT_POINT;
+
+/// Pedersen base point for encoding openings (derived via hash)
+pub static H: std::sync::LazyLock<RistrettoPoint> = std::sync::LazyLock::new(|| {
+    RistrettoPoint::hash_from_bytes::<Sha3_512>(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes())
+});
+```
+
+- **G**: The standard Ristretto basepoint, used for encoding message values
+- **H**: A secondary basepoint derived by hashing G, used for randomness in commitments
+
+<Note>
+The base point `H` is computed deterministically from `G` using SHA3-512 hashing. This ensures that the discrete log relationship between `G` and `H` is unknown, which is critical for the security of Pedersen commitments.
+</Note>
+
+## Key Lengths and Constants
+
+All cryptographic components have standardized byte lengths:
+
+```rust
+// From zk-sdk/src/lib.rs:38-43
+const UNIT_LEN: usize = 32;
+const RISTRETTO_POINT_LEN: usize = 32;  // Compressed point
+const SCALAR_LEN: usize = 32;           // Scalar field element
+
+// From zk-sdk/src/encryption/mod.rs:30-56
+pub const PEDERSEN_COMMITMENT_LEN: usize = 32;
+pub const PEDERSEN_OPENING_LEN: usize = 32;
+pub const DECRYPT_HANDLE_LEN: usize = 32;
+pub const ELGAMAL_CIPHERTEXT_LEN: usize = 64;  // commitment + handle
+pub const ELGAMAL_PUBKEY_LEN: usize = 32;
+pub const ELGAMAL_SECRET_KEY_LEN: usize = 32;
+pub const ELGAMAL_KEYPAIR_LEN: usize = 64;     // pubkey + secret
+```
+
+## The Twisted ElGamal Approach
+
+Unlike traditional ElGamal encryption, the SDK implements a **twisted** variant where:
+
+1. **Messages are encrypted in the exponent**: Values are encoded as `value * G` rather than direct group elements
+2. **Ciphertexts are Pedersen commitments**: Each ciphertext is a commitment with an additional decryption handle
+3. **Proof systems are unified**: The same proof techniques work for both commitments and ciphertexts
+
+This design choice enables powerful homomorphic properties and seamless integration with zero-knowledge proof systems.
+
+<CodeGroup>
+```rust Traditional ElGamal
+// Traditional: message m is a group element
+let ciphertext = (r*G, m + r*pubkey)
+```
+
+```rust Twisted ElGamal (This SDK)
+// Twisted: message m is in the exponent
+let commitment = m*G + r*H          // Pedersen commitment
+let handle = r*pubkey               // Decryption handle
+let ciphertext = (commitment, handle)
+```
+</CodeGroup>
+
+## Homomorphic Properties
+
+All three primitives support homomorphic operations:
+
+### Addition
+
+```rust
+// Adding encrypted values (from zk-sdk/src/encryption/elgamal.rs:717-723)
+let ciphertext_sum = &ciphertext_0 + &ciphertext_1;
+// Decrypts to: amount_0 + amount_1
+
+// Adding commitments
+let commitment_sum = &commitment_0 + &commitment_1;
+```
+
+### Subtraction
+
+```rust
+// Subtracting encrypted values
+let ciphertext_diff = &ciphertext_0 - &ciphertext_1;
+// Decrypts to: amount_0 - amount_1
+```
+
+### Scalar Multiplication
+
+```rust
+// Multiplying by a known scalar
+let scalar = Scalar::from(5u64);
+let ciphertext_product = &ciphertext * &scalar;
+// Decrypts to: amount * 5
+```
+
+<Warning>
+Homomorphic operations preserve the encryption but can lead to **negative values** in the scalar field. Always use range proofs to ensure values remain in the expected positive range.
+</Warning>
+
+## Discrete Logarithm Decryption
+
+Since messages are encrypted "in the exponent", decryption requires solving a discrete logarithm problem:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:127-131
+fn decrypt(secret: &ElGamalSecretKey, ciphertext: &ElGamalCiphertext) -> DiscreteLog {
+    DiscreteLog::new_for_g(
+        ciphertext.commitment.get_point() - &(&secret.0 * &ciphertext.handle.0),
+    )
+}
+```
+
+The result is a `DiscreteLog` instance that must be solved to recover the original value. For small values (up to 2^32), this is computed efficiently using lookup tables and baby-step giant-step algorithms.
+
+<Info>
+The discrete log computation is intentionally limited to small values. This is not a limitation in practice, as the SDK is designed for confidential token amounts, which are typically well within the 64-bit range.
+</Info>
+
+## Transcript and Fiat-Shamir
+
+All zero-knowledge proofs use the **Fiat-Shamir heuristic** to convert interactive sigma protocols into non-interactive proofs. The SDK uses [Merlin transcripts](https://docs.rs/merlin/latest/merlin/) for this purpose.
+
+```rust
+// From zk-sdk/src/lib.rs:32-36
+pub const TRANSCRIPT_DOMAIN: &[u8] = b"solana-zk-elgamal-proof-program-v1";
+```
+
+<Warning>
+**Critical Security Note**: The transcript domain separator `TRANSCRIPT_DOMAIN` MUST be changed for any fork or separate deployment to prevent cross-chain proof replay attacks.
+</Warning>
+
+## Security Considerations
+
+### Constant-Time Operations
+
+Secret keys and openings implement constant-time equality checks to prevent timing attacks:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:640-644
+impl ConstantTimeEq for ElGamalSecretKey {
+    fn ct_eq(&self, other: &Self) -> Choice {
+        self.0.ct_eq(&other.0)
+    }
+}
+```
+
+### Zeroization
+
+Sensitive values are automatically zeroized when dropped:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:149-156
+#[derive(Clone, Deserialize, PartialEq, Eq, Serialize, Zeroize)]
+#[zeroize(drop)]
+pub struct ElGamalKeypair {
+    public: ElGamalPubkey,
+    secret: ElGamalSecretKey,
+}
+```
+
+### Identity Element Checks
+
+Proof verification explicitly rejects identity elements to prevent malleability attacks:
+
+```rust
+// From sigma proof verification
+if pubkey.get_point().is_identity() 
+    || commitment.get_point().is_identity() {
+    return Err(EqualityProofVerificationError::InvalidProof);
+}
+```
+
+## Next Steps
+
+Now that you understand the foundational concepts, dive deeper into each component:
+
+<CardGroup cols={3}>
+  <Card title="ElGamal Encryption" icon="lock" href="/concepts/elgamal-encryption">
+    Learn about twisted ElGamal encryption, key generation, and decryption
+  </Card>
+  <Card title="Pedersen Commitments" icon="shield" href="/concepts/pedersen-commitments">
+    Understand cryptographic commitments and their properties
+  </Card>
+  <Card title="Zero-Knowledge Proofs" icon="fingerprint" href="/concepts/zero-knowledge-proofs">
+    Explore the various proof systems available in the SDK
+  </Card>
+</CardGroup>

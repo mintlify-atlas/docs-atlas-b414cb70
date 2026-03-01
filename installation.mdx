@@ -1,0 +1,344 @@
+---
+title: "Installation"
+description: "Install the ZK ElGamal Proof SDK for Rust or JavaScript development"
+---
+
+## Choose Your Platform
+
+The ZK ElGamal Proof SDK is available for both Rust and JavaScript/TypeScript development. Choose the installation method that matches your project.
+
+<CodeGroup>
+
+```bash Rust (Cargo)
+cargo add solana-zk-sdk
+```
+
+```bash JavaScript (npm)
+npm install @solana/zk-sdk
+```
+
+```bash JavaScript (pnpm)
+pnpm add @solana/zk-sdk
+```
+
+```bash JavaScript (yarn)
+yarn add @solana/zk-sdk
+```
+
+</CodeGroup>
+
+## Rust Installation
+
+### Prerequisites
+
+<Steps>
+  <Step title="Install Rust">
+    Ensure you have Rust 1.75 or later installed. The project uses Rust edition 2021.
+
+    ```bash
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+    ```
+  </Step>
+
+  <Step title="Add to Cargo.toml">
+    Add the SDK to your project's dependencies:
+
+    ```toml Cargo.toml
+    [dependencies]
+    solana-zk-sdk = "5.0.1"
+    ```
+
+    For Solana program development, you may need additional dependencies:
+
+    ```toml Cargo.toml
+    [dependencies]
+    solana-zk-sdk = "5.0.1"
+    solana-instruction = "3.2.0"
+    solana-address = "2.2.0"
+    ```
+  </Step>
+
+  <Step title="Import in Your Code">
+    Start using the encryption primitives:
+
+    ```rust
+    use solana_zk_sdk::encryption::{
+        elgamal::{ElGamalKeypair, ElGamalPubkey, ElGamalSecretKey},
+        pedersen::Pedersen,
+    };
+    ```
+  </Step>
+</Steps>
+
+### Platform-Specific Features
+
+The SDK automatically enables platform-specific features:
+
+<Info>
+  When targeting `target_os = "solana"`, certain dependencies like encryption and proof generation are disabled to optimize program size. Full functionality is available for all other platforms.
+</Info>
+
+## JavaScript Installation
+
+### Prerequisites
+
+<Steps>
+  <Step title="Node.js Version">
+    Ensure you have Node.js 16 or later installed:
+
+    ```bash
+    node --version
+    ```
+  </Step>
+
+  <Step title="Install Package">
+    Install the WebAssembly package:
+
+    ```bash
+    npm install @solana/zk-sdk
+    ```
+
+    The package includes pre-compiled WASM binaries for all target environments.
+  </Step>
+
+  <Step title="Choose Your Import">
+    The package provides different entry points for various environments:
+
+    <CodeGroup>
+
+    ```javascript Node.js (CommonJS)
+    const { ElGamalKeypair, PubkeyValidityProofData } = require('@solana/zk-sdk/node');
+    ```
+
+    ```javascript ES Modules (Browser)
+    import init, { ElGamalKeypair, PubkeyValidityProofData } from '@solana/zk-sdk/web';
+
+    // Initialize WASM module first
+    await init();
+    ```
+
+    ```javascript Bundler (Webpack/Vite)
+    import { ElGamalKeypair, PubkeyValidityProofData } from '@solana/zk-sdk/bundler';
+    ```
+
+    </CodeGroup>
+  </Step>
+</Steps>
+
+### Environment-Specific Setup
+
+<Tabs>
+  <Tab title="Node.js">
+    For Node.js applications, use the CommonJS entry point:
+
+    ```javascript
+    const {
+      ElGamalKeypair,
+      ElGamalSecretKey,
+      ElGamalPubkey,
+      PubkeyValidityProofData,
+    } = require('@solana/zk-sdk/node');
+
+    // No initialization needed - ready to use
+    const keypair = new ElGamalKeypair();
+    ```
+
+    **Package Path**: `./dist/node/index.cjs`
+  </Tab>
+
+  <Tab title="Web Browser">
+    For vanilla web applications without a bundler:
+
+    ```html
+    <script type="module">
+      import init, { ElGamalKeypair, PubkeyValidityProofData } 
+        from './node_modules/@solana/zk-sdk/dist/web/index.js';
+
+      async function run() {
+        // Initialize WASM module
+        await init();
+
+        // Now you can use the SDK
+        const keypair = new ElGamalKeypair();
+      }
+
+      run();
+    </script>
+    ```
+
+    **Package Path**: `./dist/web/index.js`
+  </Tab>
+
+  <Tab title="Webpack">
+    For Webpack projects, use the bundler entry point:
+
+    ```javascript
+    import { ElGamalKeypair, PubkeyValidityProofData } from '@solana/zk-sdk/bundler';
+
+    // No initialization needed
+    const keypair = new ElGamalKeypair();
+    ```
+
+    **webpack.config.js**:
+    ```javascript
+    module.exports = {
+      experiments: {
+        asyncWebAssembly: true,
+      },
+    };
+    ```
+
+    **Package Path**: `./dist/bundler/index.js`
+  </Tab>
+
+  <Tab title="Vite">
+    For Vite projects:
+
+    ```javascript
+    import { ElGamalKeypair, PubkeyValidityProofData } from '@solana/zk-sdk/bundler';
+
+    const keypair = new ElGamalKeypair();
+    ```
+
+    **vite.config.js**:
+    ```javascript
+    export default {
+      optimizeDeps: {
+        exclude: ['@solana/zk-sdk'],
+      },
+    };
+    ```
+
+    **Package Path**: `./dist/bundler/index.js`
+  </Tab>
+</Tabs>
+
+### TypeScript Support
+
+The package includes TypeScript definitions for all environments:
+
+```typescript
+import type { ElGamalKeypair, PubkeyValidityProofData } from '@solana/zk-sdk/bundler';
+
+// Type declarations are located at:
+// - Node: ./dist/node/index.d.ts
+// - Web: ./dist/web/index.d.ts
+// - Bundler: ./dist/bundler/index.d.ts
+```
+
+## Verify Installation
+
+<Tabs>
+  <Tab title="Rust">
+    Create a simple test to verify the installation:
+
+    ```rust src/main.rs
+    use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+    fn main() {
+        let keypair = ElGamalKeypair::new_rand();
+        println!("ElGamal keypair generated successfully!");
+    }
+    ```
+
+    Run with:
+    ```bash
+    cargo run
+    ```
+  </Tab>
+
+  <Tab title="JavaScript (Node.js)">
+    Create a test file:
+
+    ```javascript test.js
+    const { ElGamalKeypair } = require('@solana/zk-sdk/node');
+
+    const keypair = new ElGamalKeypair();
+    console.log('ElGamal keypair generated successfully!');
+    ```
+
+    Run with:
+    ```bash
+    node test.js
+    ```
+  </Tab>
+
+  <Tab title="JavaScript (Browser)">
+    Create an HTML file:
+
+    ```html index.html
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>ZK SDK Test</title>
+    </head>
+    <body>
+      <script type="module">
+        import init, { ElGamalKeypair } from './node_modules/@solana/zk-sdk/dist/web/index.js';
+
+        await init();
+        const keypair = new ElGamalKeypair();
+        console.log('ElGamal keypair generated successfully!');
+      </script>
+    </body>
+    </html>
+    ```
+
+    Serve with a local server:
+    ```bash
+    npx serve .
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+    Learn how to generate keypairs, encrypt data, and create zero-knowledge proofs.
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/overview">
+    Understand the cryptographic foundations of ElGamal encryption and zero-knowledge proofs.
+  </Card>
+</CardGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Rust: Compilation errors on curve25519-dalek">
+    The SDK uses `curve25519-dalek` v4.1.3 with SIMD optimizations. If you encounter performance issues in development builds, the workspace configuration automatically sets `opt-level = 3` for this crate.
+
+    This is already configured in the workspace `Cargo.toml` and should not require manual intervention.
+  </Accordion>
+
+  <Accordion title="JavaScript: WASM module initialization failed">
+    For web environments, ensure you call `await init()` before using any SDK functions:
+
+    ```javascript
+    import init, { ElGamalKeypair } from '@solana/zk-sdk/web';
+
+    await init(); // Required for web target
+    const keypair = new ElGamalKeypair();
+    ```
+
+    Node.js and bundler targets do not require initialization.
+  </Accordion>
+
+  <Accordion title="Bundler: AsyncWebAssembly experiment required">
+    Some bundlers require enabling WebAssembly support:
+
+    **Webpack 5**:
+    ```javascript
+    experiments: {
+      asyncWebAssembly: true,
+    }
+    ```
+
+    **Vite**: No special configuration needed, but exclude from optimization:
+    ```javascript
+    optimizeDeps: {
+      exclude: ['@solana/zk-sdk'],
+    }
+    ```
+  </Accordion>
+</AccordionGroup>

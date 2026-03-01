@@ -1,0 +1,172 @@
+---
+title: "Ciphertext-Commitment Equality Proof"
+description: "Proves that an ElGamal ciphertext and Pedersen commitment encode the same message"
+---
+
+## Overview
+
+The ciphertext-commitment equality proof certifies that an ElGamal ciphertext and a Pedersen commitment encode the same plaintext value. The prover must provide:
+- The decryption key for the ElGamal ciphertext
+- The Pedersen opening for the commitment
+
+This proof is fundamental to confidential token systems where both encryption (for privacy) and commitments (for range proofs) are used simultaneously.
+
+The protocol guarantees **computational soundness** and **perfect zero-knowledge** in the random oracle model.
+
+## Proof Structure
+
+The `CiphertextCommitmentEqualityProof` contains six components:
+
+<ParamField path="Y_0" type="CompressedRistretto">
+  Commitment to blinding factor for the ElGamal public key
+</ParamField>
+
+<ParamField path="Y_1" type="CompressedRistretto">
+  Commitment combining message and ciphertext handle
+</ParamField>
+
+<ParamField path="Y_2" type="CompressedRistretto">
+  Commitment for the Pedersen commitment verification
+</ParamField>
+
+<ParamField path="z_s" type="Scalar">
+  Masked ElGamal secret key
+</ParamField>
+
+<ParamField path="z_x" type="Scalar">
+  Masked plaintext message
+</ParamField>
+
+<ParamField path="z_r" type="Scalar">
+  Masked Pedersen opening
+</ParamField>
+
+## Proof Data Context
+
+```rust
+pub struct CiphertextCommitmentEqualityProofContext {
+    pub pubkey: PodElGamalPubkey,           // 32 bytes
+    pub ciphertext: PodElGamalCiphertext,   // 64 bytes
+    pub commitment: PodPedersenCommitment,  // 32 bytes
+}
+```
+
+## Generating a Proof
+
+```rust
+use solana_zk_sdk::{
+    encryption::{
+        elgamal::ElGamalKeypair,
+        pedersen::{Pedersen, PedersenCommitment, PedersenOpening},
+    },
+    zk_elgamal_proof_program::proof_data::CiphertextCommitmentEqualityProofData,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let amount: u64 = 55;
+
+// Create ElGamal ciphertext
+let ciphertext = keypair.pubkey().encrypt(amount);
+
+// Create Pedersen commitment for the same amount
+let (commitment, opening) = Pedersen::new(amount);
+
+// Generate proof that they encode the same value
+let proof_data = CiphertextCommitmentEqualityProofData::new(
+    &keypair,
+    &ciphertext,
+    &commitment,
+    &opening,
+    amount,
+)?;
+```
+
+## Verification
+
+The verification checks the following algebraic relations using challenge scalars `c`, `w`, and `ww`:
+
+```
+z_s*P - c*H = Y_0
+w*z_x*G + w*z_s*D - w*c*C_ciphertext = w*Y_1
+ww*z_x*G + ww*z_r*H - ww*c*C_commitment = ww*Y_2
+```
+
+Where:
+- `P` is the ElGamal public key
+- `G`, `H` are the Pedersen base points
+- `D` is the ciphertext handle
+- `C_ciphertext` is the ElGamal ciphertext commitment
+- `C_commitment` is the Pedersen commitment
+
+<Note>
+  All points (public key, ciphertext components, and Pedersen commitment) must be non-identity. Identity points are rejected to prevent trivial proofs.
+</Note>
+
+## Use Cases
+
+- **Confidential tokens**: Linking encrypted balances with range-proof commitments
+- **Balance validation**: Proving an encrypted balance matches a committed value
+- **Deposit proofs**: Verifying the encrypted amount matches the committed deposit
+- **Withdrawal verification**: Ensuring withdrawal amounts are consistent across encryption and commitment
+- **Transfer integrity**: Proving amounts in encrypted and committed forms are identical
+
+## Typical Usage Pattern
+
+In Token-2022 confidential transfers:
+
+1. **Encrypt** the transfer amount for the recipient's privacy
+2. **Commit** to the amount for range proof verification
+3. **Prove** they represent the same value using this proof
+4. Attach a **range proof** to the commitment to ensure it's within valid bounds
+
+```rust
+// 1. Encrypt for recipient
+let encrypted_amount = recipient_pubkey.encrypt(transfer_amount);
+
+// 2. Commit for range proof
+let (commitment, opening) = Pedersen::new(transfer_amount);
+
+// 3. Prove equality
+let equality_proof = CiphertextCommitmentEqualityProofData::new(
+    &sender_keypair,
+    &encrypted_amount,
+    &commitment,
+    &opening,
+    transfer_amount,
+)?;
+
+// 4. Add range proof (separate proof)
+let range_proof = RangeProof::new(...);
+```
+
+## Security Considerations
+
+<Warning>
+  This proof alone does NOT guarantee the committed value is within valid bounds. Always combine with a range proof when used in production systems to prevent overflow attacks.
+</Warning>
+
+<Warning>
+  The prover must possess:
+  1. The ElGamal secret key
+  2. The Pedersen opening
+  
+  Both are sensitive values that must be protected.
+</Warning>
+
+## Proof Size
+
+Total size: **192 bytes** (6 × 32 bytes)
+- 3 Ristretto points (96 bytes)
+- 3 scalars (96 bytes)
+
+## Related Proofs
+
+- [Ciphertext-Ciphertext Equality](/proofs/ciphertext-ciphertext-equality): For proving two ciphertexts are equal
+- [Range Proofs](/proofs/range-proofs): For proving committed values are within bounds
+- [Grouped Ciphertext Validity](/proofs/grouped-ciphertext-validity): For proving validity of multi-handle ciphertexts
+
+## Source Code
+
+Sigma proof implementation: `zk-sdk/src/sigma_proofs/ciphertext_commitment_equality.rs:46`
+
+Proof data structure: `zk-sdk/src/zk_elgamal_proof_program/proof_data/ciphertext_commitment_equality.rs:41`

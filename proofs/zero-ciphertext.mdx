@@ -1,0 +1,105 @@
+---
+title: "Zero-Ciphertext Proof"
+description: "Proves that an ElGamal ciphertext encrypts the value zero"
+---
+
+## Overview
+
+The zero-ciphertext proof certifies that a given ElGamal ciphertext encrypts the message 0 in the scalar field (`Scalar::zero()`). This proof is useful for verifying that encrypted values have been fully consumed or that no value exists.
+
+The protocol guarantees **computational soundness** (by the hardness of discrete log) and **perfect zero-knowledge** in the random oracle model.
+
+## Proof Structure
+
+The `ZeroCiphertextProof` contains three components:
+
+<ParamField path="Y_P" type="CompressedRistretto">
+  Commitment to the random masking factor with respect to the public key
+</ParamField>
+
+<ParamField path="Y_D" type="CompressedRistretto">
+  Commitment to the random masking factor with respect to the ciphertext handle
+</ParamField>
+
+<ParamField path="z" type="Scalar">
+  The masked secret key value (challenge × secret + blinding factor)
+</ParamField>
+
+## Proof Data Context
+
+The `ZeroCiphertextProofData` includes:
+
+```rust
+pub struct ZeroCiphertextProofContext {
+    pub pubkey: PodElGamalPubkey,      // 32 bytes
+    pub ciphertext: PodElGamalCiphertext, // 64 bytes
+}
+```
+
+## Generating a Proof
+
+To generate a zero-ciphertext proof, you need:
+- The ElGamal keypair associated with the ciphertext
+- The ciphertext that encrypts zero
+- A transcript for the Fiat-Shamir heuristic
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::{ElGamalKeypair, ElGamalCiphertext},
+    zk_elgamal_proof_program::proof_data::ZeroCiphertextProofData,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let ciphertext = keypair.pubkey().encrypt(0_u64);
+
+// Generate the proof
+let proof_data = ZeroCiphertextProofData::new(
+    &keypair,
+    &ciphertext,
+)?;
+```
+
+## Verification
+
+The verification checks the algebraic relation:
+
+```
+z*P - c*H = Y_P
+w*z*D - w*c*C = w*Y_D
+```
+
+Where:
+- `P` is the ElGamal public key
+- `H` is the Pedersen commitment base point
+- `D` is the ciphertext handle
+- `C` is the ciphertext commitment
+- `c` and `w` are challenge scalars from the transcript
+
+<Note>
+  The proof will fail verification if:
+  - The ciphertext does not encrypt zero
+  - Any of the public key, commitment, or handle is the identity point
+</Note>
+
+## Use Cases
+
+- **Balance verification**: Proving an account balance is exactly zero after withdrawal
+- **Nullifier proofs**: Demonstrating that an encrypted value has been consumed
+- **Zero-knowledge transfers**: Verifying intermediate encrypted values are zero
+
+## Security Considerations
+
+<Warning>
+  The prover must possess the ElGamal secret key to generate this proof. The ciphertext must genuinely decrypt to zero - attempting to generate a proof for a non-zero ciphertext will result in an invalid proof.
+</Warning>
+
+## Related Proofs
+
+- [Ciphertext-Ciphertext Equality](/proofs/ciphertext-ciphertext-equality): For proving two ciphertexts encrypt the same value
+- [Grouped Ciphertext Validity](/proofs/grouped-ciphertext-validity): For proving validity of grouped ciphertexts
+
+## Source Code
+
+Sigma proof implementation: `zk-sdk/src/sigma_proofs/zero_ciphertext.rs:41`
+
+Proof data structure: `zk-sdk/src/zk_elgamal_proof_program/proof_data/zero_ciphertext.rs:34`

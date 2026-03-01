@@ -1,0 +1,378 @@
+---
+title: "Authenticated Encryption"
+description: "AES-128-GCM-SIV authenticated encryption for u64 values"
+---
+
+## Overview
+
+The authenticated encryption module provides a simple wrapper around AES-128-GCM-SIV (Galois/Counter Mode with Synthetic Initialization Vector) specialized for encrypting `u64` values. This implementation is optimized for SPL Token-2022 where account balances are always 64-bit unsigned integers.
+
+## Key Concepts
+
+### AES-GCM-SIV
+
+AES-GCM-SIV is an authenticated encryption with associated data (AEAD) cipher that provides:
+- **Confidentiality**: Encrypted data cannot be read without the key
+- **Authenticity**: Tampering with ciphertext is detectable
+- **Nonce-misuse resistance**: Reusing nonces degrades to standard deterministic encryption
+
+### Fixed-Size Encryption
+
+This implementation specializes in encrypting `u64` values:
+- **Plaintext**: 8 bytes (u64 in little-endian)
+- **Nonce**: 12 bytes (randomly generated)
+- **Ciphertext**: 24 bytes (8 bytes encrypted + 16 byte authentication tag)
+- **Total**: 36 bytes per encrypted value
+
+## Core Types
+
+### AeKey
+
+An AES-128 key for authenticated encryption. Instances are zeroized on drop.
+
+```rust
+pub struct AeKey([u8; AE_KEY_LEN])
+```
+
+#### Methods
+
+**Key Generation**
+
+```rust
+// Generate random key
+pub fn new_rand() -> Self
+
+// Derive from entropy seed
+pub fn from_seed(seed: &[u8]) -> Result<Self, Box<dyn error::Error>>
+
+// Derive from Solana signer
+pub fn new_from_signer(
+    signer: &dyn Signer,
+    public_seed: &[u8],
+) -> Result<Self, Box<dyn error::Error>>
+
+// Derive from signature
+pub fn new_from_signature(signature: &Signature) -> Result<Self, Box<dyn error::Error>>
+```
+
+**Encryption and Decryption**
+
+```rust
+// Encrypt a u64 value
+pub fn encrypt(&self, amount: u64) -> AeCiphertext
+
+// Decrypt a ciphertext
+pub fn decrypt(&self, ciphertext: &AeCiphertext) -> Option<u64>
+```
+
+### AeCiphertext
+
+An authenticated encryption ciphertext containing nonce and encrypted data.
+
+```rust
+pub struct AeCiphertext {
+    nonce: [u8; 12],
+    ciphertext: [u8; 24],
+}
+```
+
+#### Methods
+
+```rust
+// Decrypt using a key
+pub fn decrypt(&self, key: &AeKey) -> Option<u64>
+
+// Serialization
+pub fn to_bytes(&self) -> [u8; AE_CIPHERTEXT_LEN]
+pub fn from_bytes(bytes: &[u8]) -> Option<AeCiphertext>
+```
+
+## Usage Examples
+
+### Basic Encryption and Decryption
+
+```rust
+use solana_zk_sdk::encryption::auth_encryption::AeKey;
+
+// Generate a random key
+let key = AeKey::new_rand();
+let amount = 55_u64;
+
+// Encrypt the amount
+let ciphertext = key.encrypt(amount);
+
+// Decrypt back to original value
+let decrypted = ciphertext.decrypt(&key).unwrap();
+assert_eq!(amount, decrypted);
+```
+
+### Deriving Keys from Solana Signer
+
+```rust
+use solana_keypair::Keypair;
+use solana_address::Address;
+use solana_zk_sdk::encryption::auth_encryption::AeKey;
+
+let solana_keypair = Keypair::new();
+let public_seed = Address::default();
+
+// Derive AE key from Solana keypair
+let ae_key = AeKey::new_from_signer(
+    &solana_keypair,
+    public_seed.as_ref(),
+).unwrap();
+
+// Use the derived key
+let amount = 1000_u64;
+let ciphertext = ae_key.encrypt(amount);
+let decrypted = ae_key.decrypt(&ciphertext).unwrap();
+assert_eq!(amount, decrypted);
+```
+
+### Key Derivation from Seed
+
+```rust
+use solana_zk_sdk::encryption::auth_encryption::AeKey;
+
+// Derive key from seed
+let seed = vec![0u8; 32];
+let key = AeKey::from_seed(&seed).unwrap();
+
+// Seed must be at least 16 bytes
+let short_seed = vec![0u8; 15];
+assert!(AeKey::from_seed(&short_seed).is_err());
+
+// Seed must be at most 65535 bytes
+let long_seed = vec![0u8; 65536];
+assert!(AeKey::from_seed(&long_seed).is_err());
+```
+
+### Key Derivation from Signature
+
+```rust
+use solana_signature::Signature;
+use solana_zk_sdk::encryption::auth_encryption::AeKey;
+
+// In practice, get signature from signing operation
+let signature: Signature = /* ... */;
+
+// Derive key from signature
+let key = AeKey::new_from_signature(&signature).unwrap();
+```
+
+### Serialization and Deserialization
+
+```rust
+let key = AeKey::new_rand();
+let amount = 12345_u64;
+
+// Encrypt
+let ciphertext = key.encrypt(amount);
+
+// Serialize to bytes (36 bytes total)
+let bytes = ciphertext.to_bytes();
+assert_eq!(bytes.len(), 36);
+
+// Deserialize
+let decoded_ciphertext = AeCiphertext::from_bytes(&bytes).unwrap();
+let decrypted = decoded_ciphertext.decrypt(&key).unwrap();
+assert_eq!(amount, decrypted);
+```
+
+### Key Conversion
+
+```rust
+use solana_zk_sdk::encryption::auth_encryption::AeKey;
+
+// From byte array
+let key_bytes = [0u8; 16];
+let key = AeKey::from(key_bytes);
+
+// To byte array
+let key_bytes_out: [u8; 16] = key.into();
+
+// From slice (with error handling)
+let slice = &[0u8; 16];
+let key = AeKey::try_from(slice).unwrap();
+
+// Wrong length fails
+let short_slice = &[0u8; 15];
+assert!(AeKey::try_from(short_slice).is_err());
+```
+
+### Non-Deterministic Encryption
+
+```rust
+let key = AeKey::new_rand();
+let amount = 123_u64;
+
+// Encrypt same value twice
+let ciphertext1 = key.encrypt(amount);
+let ciphertext2 = key.encrypt(amount);
+
+// Ciphertexts are different (different random nonces)
+assert_ne!(ciphertext1.to_bytes(), ciphertext2.to_bytes());
+
+// But both decrypt to the same value
+assert_eq!(ciphertext1.decrypt(&key).unwrap(), amount);
+assert_eq!(ciphertext2.decrypt(&key).unwrap(), amount);
+```
+
+## Security Considerations
+
+### Tamper Detection
+
+The authenticated encryption scheme detects any tampering:
+
+```rust
+let key = AeKey::new_rand();
+let amount = 99_u64;
+
+let ciphertext = key.encrypt(amount);
+let mut tampered_bytes = ciphertext.to_bytes();
+
+// Flip a bit in the ciphertext
+tampered_bytes[12] ^= 1;
+
+let tampered_ciphertext = AeCiphertext::from_bytes(&tampered_bytes).unwrap();
+
+// Decryption fails due to authentication failure
+assert!(tampered_ciphertext.decrypt(&key).is_none());
+```
+
+### Nonce Tampering
+
+Tampering with the nonce also causes decryption to fail:
+
+```rust
+let key = AeKey::new_rand();
+let amount = 99_u64;
+
+let ciphertext = key.encrypt(amount);
+let mut tampered_bytes = ciphertext.to_bytes();
+
+// Flip a bit in the nonce
+tampered_bytes[0] ^= 1;
+
+let tampered_ciphertext = AeCiphertext::from_bytes(&tampered_bytes).unwrap();
+assert!(tampered_ciphertext.decrypt(&key).is_none());
+```
+
+### Key Management
+
+- Keys are automatically zeroized on drop
+- Never expose keys or serialize them insecurely
+- Use proper key derivation when deriving from Solana signers
+- The seed-based KDF is non-standard and may be refactored in future versions
+
+### Nonce Reuse
+
+AES-GCM-SIV provides nonce-misuse resistance:
+- Accidentally reusing a nonce degrades to deterministic encryption
+- Still maintains confidentiality but loses semantic security
+- The implementation generates random nonces for each encryption
+
+## Algorithm Details
+
+### Internal Implementation
+
+The module uses the `aes-gcm-siv` crate with AES-128:
+
+```rust
+use aes_gcm_siv::{Aes128GcmSiv, aead::{Aead, KeyInit}};
+```
+
+### Encryption Process
+
+1. Convert `u64` amount to 8-byte little-endian representation
+2. Generate random 12-byte nonce using `OsRng`
+3. Encrypt plaintext using AES-128-GCM-SIV
+4. Return nonce and ciphertext (24 bytes = 8 bytes + 16 byte tag)
+
+### Decryption Process
+
+1. Extract nonce (first 12 bytes) and ciphertext (remaining 24 bytes)
+2. Attempt to decrypt using AES-128-GCM-SIV
+3. Verify authentication tag (automatic in AEAD)
+4. Convert decrypted bytes back to `u64`
+5. Return `None` if authentication fails or length is incorrect
+
+## Comparison with ElGamal
+
+| Feature | Authenticated Encryption | ElGamal |
+|---------|-------------------------|----------|
+| **Security** | Symmetric (shared key) | Asymmetric (public key) |
+| **Ciphertext Size** | 36 bytes | 64 bytes |
+| **Homomorphic** | No | Yes |
+| **Authentication** | Yes (AEAD) | No |
+| **Decryption Speed** | Very fast | Requires discrete log |
+| **Use Case** | Private storage | Multi-party protocols |
+
+## Use Cases
+
+### SPL Token-2022 Balances
+
+The primary use case is encrypting token account balances:
+
+```rust
+let balance: u64 = 1_000_000;
+let key = AeKey::new_rand();
+
+// Store encrypted balance
+let encrypted_balance = key.encrypt(balance);
+let balance_bytes = encrypted_balance.to_bytes();
+
+// Later, retrieve and decrypt
+let retrieved_ciphertext = AeCiphertext::from_bytes(&balance_bytes).unwrap();
+let decrypted_balance = retrieved_ciphertext.decrypt(&key).unwrap();
+assert_eq!(balance, decrypted_balance);
+```
+
+### Private Data Storage
+
+Any `u64` value that needs authenticated encryption:
+
+```rust
+let key = AeKey::new_rand();
+
+// Encrypt various u64 values
+let timestamp = 1234567890_u64;
+let counter = 42_u64;
+let identifier = 0xDEADBEEF_u64;
+
+let enc_timestamp = key.encrypt(timestamp);
+let enc_counter = key.encrypt(counter);
+let enc_identifier = key.encrypt(identifier);
+```
+
+## Error Handling
+
+Decryption returns `Option<u64>` instead of `Result`:
+
+```rust
+let key1 = AeKey::new_rand();
+let key2 = AeKey::new_rand();
+
+let amount = 100_u64;
+let ciphertext = key1.encrypt(amount);
+
+// Decryption with wrong key returns None
+assert!(ciphertext.decrypt(&key2).is_none());
+
+// Decryption with correct key returns Some
+assert_eq!(ciphertext.decrypt(&key1), Some(amount));
+```
+
+## Constants
+
+```rust
+// Key length in bytes (AES-128)
+pub const AE_KEY_LEN: usize = 16;
+
+// Total ciphertext length in bytes
+pub const AE_CIPHERTEXT_LEN: usize = 36;
+
+// Internal constants
+const NONCE_LEN: usize = 12;
+const CIPHERTEXT_LEN: usize = 24;  // 8 bytes plaintext + 16 byte tag
+```

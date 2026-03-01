@@ -1,0 +1,507 @@
+---
+title: "Zero-Knowledge Proofs"
+description: "Proving statements about encrypted data without revealing the underlying values"
+---
+
+The ZK ElGamal Proof SDK provides a comprehensive suite of zero-knowledge proof systems that enable verification of statements about encrypted values without revealing the values themselves. These proofs are essential for confidential transactions on Solana.
+
+## Overview
+
+Zero-knowledge proofs in this SDK are based on **sigma protocols** converted to non-interactive proofs using the **Fiat-Shamir heuristic**. All proofs provide:
+
+- **Completeness**: Valid statements can always be proven
+- **Soundness**: Invalid statements cannot be proven (except with negligible probability)
+- **Zero-knowledge**: Proofs reveal nothing beyond the validity of the statement
+
+<Info>
+Formal documentation and security proofs for the sigma protocols can be found in the [ZK Token proof program documentation](https://docs.solanalabs.com/runtime/zk-token-proof).
+</Info>
+
+## Proof Types
+
+The SDK implements several types of zero-knowledge proofs:
+
+### Equality Proofs
+
+<CardGroup cols={2}>
+  <Card title="Ciphertext-Commitment Equality" icon="equals">
+    Proves an ElGamal ciphertext and Pedersen commitment encode the same value
+  </Card>
+  <Card title="Ciphertext-Ciphertext Equality" icon="clone">
+    Proves two ElGamal ciphertexts encrypt the same value under different keys
+  </Card>
+</CardGroup>
+
+### Validity Proofs
+
+<CardGroup cols={3}>
+  <Card title="Public Key Validity" icon="key">
+    Proves an ElGamal public key is well-formed
+  </Card>
+  <Card title="Zero Ciphertext" icon="zero">
+    Proves a ciphertext encrypts zero
+  </Card>
+  <Card title="Grouped Ciphertext Validity" icon="shield-check">
+    Proves a grouped ciphertext is correctly formed
+  </Card>
+</CardGroup>
+
+### Range Proofs
+
+<Card title="Bulletproofs Range Proof" icon="chart-line">
+  Proves a committed value lies in a specific range (e.g., 0 to 2^64-1) using Bulletproofs
+</Card>
+
+### Application-Specific Proofs
+
+<Card title="Percentage with Cap" icon="percent">
+  Proves a value is a valid percentage of another value, with a maximum cap
+</Card>
+
+## Proof Lengths
+
+All proof types have fixed, predictable sizes:
+
+```rust
+// From zk-sdk/src/sigma_proofs/mod.rs:26-51
+
+/// Ciphertext-commitment equality proof: 192 bytes (6 × 32)
+pub const CIPHERTEXT_COMMITMENT_EQUALITY_PROOF_LEN: usize = 192;
+
+/// Ciphertext-ciphertext equality proof: 224 bytes (7 × 32)
+pub const CIPHERTEXT_CIPHERTEXT_EQUALITY_PROOF_LEN: usize = 224;
+
+/// Grouped ciphertext validity (2 handles): 160 bytes (5 × 32)
+pub const GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_PROOF_LEN: usize = 160;
+
+/// Grouped ciphertext validity (3 handles): 192 bytes (6 × 32)
+pub const GROUPED_CIPHERTEXT_3_HANDLES_VALIDITY_PROOF_LEN: usize = 192;
+
+/// Zero-ciphertext proof: 96 bytes (3 × 32)
+pub const ZERO_CIPHERTEXT_PROOF_LEN: usize = 96;
+
+/// Percentage with cap proof: 256 bytes (8 × 32)
+pub const PERCENTAGE_WITH_CAP_PROOF_LEN: usize = 256;
+
+/// Public key validity proof: 64 bytes (2 × 32)
+pub const PUBKEY_VALIDITY_PROOF_LEN: usize = 64;
+
+// Range proofs (Bulletproofs)
+pub const RANGE_PROOF_U64_LEN: usize = 672;   // For 64-bit values
+pub const RANGE_PROOF_U128_LEN: usize = 736;  // For 128-bit values
+pub const RANGE_PROOF_U256_LEN: usize = 800;  // For 256-bit values
+```
+
+## Ciphertext-Commitment Equality Proof
+
+This proof demonstrates that an ElGamal ciphertext and a Pedersen commitment encode the same value.
+
+### Structure
+
+```rust
+// From zk-sdk/src/sigma_proofs/ciphertext_commitment_equality.rs:44-53
+#[allow(non_snake_case)]
+pub struct CiphertextCommitmentEqualityProof {
+    Y_0: CompressedRistretto,  // First commitment point
+    Y_1: CompressedRistretto,  // Second commitment point
+    Y_2: CompressedRistretto,  // Third commitment point
+    z_s: Scalar,               // Response for secret key
+    z_x: Scalar,               // Response for message
+    z_r: Scalar,               // Response for opening
+}
+```
+
+### Creating the Proof
+
+```rust
+use solana_zk_sdk::{
+    encryption::{
+        elgamal::ElGamalKeypair,
+        pedersen::{Pedersen, PedersenOpening},
+    },
+    sigma_proofs::ciphertext_commitment_equality::CiphertextCommitmentEqualityProof,
+    transcript::TranscriptProtocol,
+};
+use merlin::Transcript;
+
+// Setup
+let keypair = ElGamalKeypair::new_rand();
+let amount = 1000u64;
+
+// Create ciphertext and commitment with the same opening
+let opening = PedersenOpening::new_rand();
+let ciphertext = keypair.pubkey().encrypt_with(amount, &opening);
+let commitment = Pedersen::with(amount, &opening);
+
+// Create proof
+let mut transcript = Transcript::new(b"EqualityProofTest");
+let proof = CiphertextCommitmentEqualityProof::new(
+    &keypair,
+    &ciphertext,
+    &commitment,
+    &opening,
+    amount,
+    &mut transcript,
+);
+```
+
+### Verifying the Proof
+
+```rust
+let mut transcript = Transcript::new(b"EqualityProofTest");
+
+proof.verify(
+    keypair.pubkey(),
+    &ciphertext,
+    &commitment,
+    &mut transcript,
+)?;
+```
+
+<Note>
+The prover needs the **secret key**, **opening**, and **amount**. The verifier only needs the **public key**, **ciphertext**, and **commitment**.
+</Note>
+
+### Use Cases
+
+- Proving a withdrawal amount matches the encrypted balance deduction
+- Linking on-chain commitments with off-chain encrypted data
+- Verifying consistency between different representations of the same value
+
+## Range Proofs (Bulletproofs)
+
+Range proofs use the Bulletproofs protocol to prove that a committed value lies within a specific range without revealing the value.
+
+### Overview
+
+The SDK implements aggregated Bulletproofs range proofs based on the [Bulletproofs paper](https://eprint.iacr.org/2017/1066) Section 4.3:
+
+```rust
+// From zk-sdk/src/range_proof/mod.rs:78-98
+#[allow(non_snake_case)]
+pub struct RangeProof {
+    A: CompressedRistretto,      // Commitment to bit-vectors
+    S: CompressedRistretto,      // Commitment to blinding vectors
+    T_1: CompressedRistretto,    // Commitment to t_1 coefficient
+    T_2: CompressedRistretto,    // Commitment to t_2 coefficient
+    t_x: Scalar,                 // Evaluation of polynomial t(x)
+    t_x_blinding: Scalar,        // Blinding for t_x
+    e_blinding: Scalar,          // Blinding for synthetic commitment
+    ipp_proof: InnerProductProof, // Inner product proof
+}
+```
+
+### Creating a Range Proof
+
+Prove a single value is in range:
+
+```rust
+use solana_zk_sdk::{
+    encryption::pedersen::Pedersen,
+    range_proof::RangeProof,
+    transcript::TranscriptProtocol,
+};
+use merlin::Transcript;
+
+let amount = 1000u64;
+let (commitment, opening) = Pedersen::new(amount);
+
+let mut transcript = Transcript::new(b"RangeProofTest");
+
+// Prove amount is a 32-bit value (0 to 2^32-1)
+let proof = RangeProof::new(
+    vec![amount],
+    vec![32],        // bit length
+    vec![&opening],
+    &mut transcript,
+)?;
+```
+
+### Aggregated Range Proofs
+
+Prove multiple values are in range with a single proof:
+
+```rust
+let amount_1 = 100u64;
+let amount_2 = 500u64;
+let amount_3 = 1000u64;
+
+let (commitment_1, opening_1) = Pedersen::new(amount_1);
+let (commitment_2, opening_2) = Pedersen::new(amount_2);
+let (commitment_3, opening_3) = Pedersen::new(amount_3);
+
+let mut transcript = Transcript::new(b"AggregatedRangeProof");
+
+// Prove all three values with one proof
+let proof = RangeProof::new(
+    vec![amount_1, amount_2, amount_3],
+    vec![64, 32, 32],  // Different bit lengths allowed
+    vec![&opening_1, &opening_2, &opening_3],
+    &mut transcript,
+)?;
+```
+
+<Info>
+**Aggregation Requirement**: The sum of all bit lengths must be a power of 2. For example:
+- ✓ 64 bits → 2^6 (valid)
+- ✓ 64 + 32 + 32 = 128 → 2^7 (valid)
+- ✗ 64 + 32 = 96 (invalid, not a power of 2)
+</Info>
+
+### Verifying Range Proofs
+
+```rust
+let mut transcript = Transcript::new(b"RangeProofTest");
+
+proof.verify(
+    vec![&commitment_1, &commitment_2, &commitment_3],
+    vec![64, 32, 32],
+    &mut transcript,
+)?;
+```
+
+### Non-Power-of-Two Bit Lengths
+
+You can use arbitrary bit lengths as long as they sum to a power of 2:
+
+```rust
+// 10 + 22 = 32 (power of 2)
+let bit_len_1 = 10;  // Max value: 1023
+let bit_len_2 = 22;  // Max value: 4,194,303
+
+let amount_1 = (1 << bit_len_1) - 1;  // Maximum 10-bit value
+let amount_2 = (1 << bit_len_2) - 1;  // Maximum 22-bit value
+
+let (commitment_1, opening_1) = Pedersen::new(amount_1);
+let (commitment_2, opening_2) = Pedersen::new(amount_2);
+
+let mut transcript = Transcript::new(b"CustomBitLengths");
+
+let proof = RangeProof::new(
+    vec![amount_1, amount_2],
+    vec![bit_len_1, bit_len_2],
+    vec![&opening_1, &opening_2],
+    &mut transcript,
+)?;
+```
+
+### Range Proof Sizes
+
+```rust
+// From zk-sdk/src/range_proof/mod.rs:52-75
+
+// For single values:
+RANGE_PROOF_U64_LEN = 672 bytes   // 64-bit values (0 to 2^64-1)
+RANGE_PROOF_U128_LEN = 736 bytes  // 128-bit values (0 to 2^128-1)
+RANGE_PROOF_U256_LEN = 800 bytes  // 256-bit values (0 to 2^256-1)
+```
+
+<Note>
+Aggregated proofs are more efficient than individual proofs. One proof for 3 values is smaller than 3 separate proofs.
+</Note>
+
+## Fiat-Shamir Transform
+
+All proofs use the Fiat-Shamir heuristic to convert interactive sigma protocols into non-interactive proofs via a cryptographic transcript.
+
+### Transcript Usage
+
+```rust
+use merlin::Transcript;
+use solana_zk_sdk::transcript::TranscriptProtocol;
+
+// Create a new transcript with a domain separator
+let mut transcript = Transcript::new(b"MyProofContext");
+
+// The proof system automatically handles:
+// 1. Appending public inputs
+// 2. Appending commitment points
+// 3. Generating challenges
+// 4. Appending responses
+```
+
+### Transcript Domain Separator
+
+```rust
+// From zk-sdk/src/lib.rs:32-36
+pub const TRANSCRIPT_DOMAIN: &[u8] = b"solana-zk-elgamal-proof-program-v1";
+```
+
+<Warning>
+**Security Critical**: This domain separator MUST be changed for any fork or deployment to prevent cross-chain proof replay attacks.
+</Warning>
+
+## Proof Verification Security
+
+### Identity Element Checks
+
+All proof verifications reject identity elements:
+
+```rust
+// From ciphertext_commitment_equality.rs:146-150
+if pubkey.get_point().is_identity()
+    || ciphertext.commitment.get_point().is_identity()
+    || ciphertext.handle.get_point().is_identity()
+    || commitment.get_point().is_identity()
+{
+    return Err(EqualityProofVerificationError::InvalidProof);
+}
+```
+
+This prevents malleability attacks and ensures proof soundness.
+
+### Point Validation
+
+All points are validated during deserialization:
+
+```rust
+// From zk-sdk/src/sigma_proofs/mod.rs:64-76
+fn ristretto_point_from_optional_slice(
+    optional_slice: Option<&[u8]>,
+) -> Result<CompressedRistretto, SigmaProofVerificationError> {
+    let Some(slice) = optional_slice else {
+        return Err(SigmaProofVerificationError::Deserialization);
+    };
+    
+    if slice.len() != RISTRETTO_POINT_LEN {
+        return Err(SigmaProofVerificationError::Deserialization);
+    }
+    
+    CompressedRistretto::from_slice(slice)
+        .map_err(|_| SigmaProofVerificationError::Deserialization)
+}
+```
+
+## Common Proof Patterns
+
+### Pattern: Confidential Transfer
+
+Prove a confidential transfer is valid:
+
+```rust
+// 1. Range proof: sender has sufficient balance
+let balance_proof = RangeProof::new(
+    vec![balance],
+    vec![64],
+    vec![&balance_opening],
+    &mut transcript,
+)?;
+
+// 2. Range proof: transfer amount is valid
+let amount_proof = RangeProof::new(
+    vec![transfer_amount],
+    vec![64],
+    vec![&amount_opening],
+    &mut transcript,
+)?;
+
+// 3. Equality proof: encrypted amount matches commitment
+let equality_proof = CiphertextCommitmentEqualityProof::new(
+    &sender_keypair,
+    &amount_ciphertext,
+    &amount_commitment,
+    &amount_opening,
+    transfer_amount,
+    &mut transcript,
+);
+```
+
+### Pattern: Batched Verification
+
+Verify multiple proofs for efficiency:
+
+```rust
+// Use the same transcript for related proofs
+let mut transcript = Transcript::new(b"BatchedProofs");
+
+proof1.verify(/* ... */, &mut transcript)?;
+proof2.verify(/* ... */, &mut transcript)?;
+proof3.verify(/* ... */, &mut transcript)?;
+
+// All proofs are cryptographically linked via the transcript
+```
+
+### Pattern: Proof Caching
+
+Cache proofs to avoid recomputation:
+
+```rust
+// Serialize proof for storage
+let proof_bytes = proof.to_bytes();
+
+// Later: deserialize and verify
+let proof = RangeProof::from_bytes(&proof_bytes)?;
+proof.verify(commitments, bit_lengths, &mut transcript)?;
+```
+
+## Performance Considerations
+
+### Proof Generation
+
+- **Range proofs**: O(n log n) where n is the sum of bit lengths
+- **Sigma proofs**: O(1) for most proof types
+- **Aggregation**: Significantly faster than individual proofs
+
+### Verification
+
+- **Range proofs**: Uses batch multiscalar multiplication for efficiency
+- **All proofs**: Constant-time verification independent of the proven value
+
+### Transcript Operations
+
+The Merlin transcript uses STROBE internally:
+
+```rust
+// Efficient challenge generation
+let challenge = transcript.challenge_scalar(b"challenge_label");
+```
+
+## Error Handling
+
+Proof operations can fail for several reasons:
+
+```rust
+use solana_zk_sdk::sigma_proofs::errors::{
+    SigmaProofVerificationError,
+    EqualityProofVerificationError,
+};
+use solana_zk_sdk::range_proof::errors::{
+    RangeProofGenerationError,
+    RangeProofVerificationError,
+};
+
+// Handle proof generation errors
+match RangeProof::new(amounts, bit_lengths, openings, &mut transcript) {
+    Ok(proof) => { /* Use proof */ },
+    Err(RangeProofGenerationError::InvalidBitSize) => {
+        // Bit length is 0 or exceeds 64
+    },
+    Err(RangeProofGenerationError::VectorLengthMismatch) => {
+        // amounts, bit_lengths, openings have different lengths
+    },
+    Err(e) => { /* Other errors */ },
+}
+
+// Handle verification errors
+match proof.verify(commitments, bit_lengths, &mut transcript) {
+    Ok(()) => { /* Proof is valid */ },
+    Err(RangeProofVerificationError::AlgebraicRelation) => {
+        // Proof verification equation failed
+    },
+    Err(RangeProofVerificationError::Deserialization) => {
+        // Invalid proof format
+    },
+    Err(e) => { /* Other errors */ },
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Rust Examples" icon="code" href="/examples/rust-usage">
+    Integrate zero-knowledge proofs into your Rust application
+  </Card>
+  <Card title="Proof Types" icon="database" href="/proofs/zero-ciphertext">
+    Explore the proof types and their use cases
+  </Card>
+</CardGroup>

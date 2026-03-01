@@ -1,0 +1,499 @@
+---
+title: "ElGamal Encryption"
+description: "Twisted ElGamal encryption scheme for confidential on-chain data"
+---
+
+The ZK ElGamal Proof SDK implements a **twisted ElGamal encryption scheme** over the Ristretto group on Curve25519. This variant encrypts messages "in the exponent" and represents ciphertexts as Pedersen commitments with decryption handles.
+
+## What is Twisted ElGamal?
+
+Traditional ElGamal encryption operates directly on group elements. The twisted variant used in this SDK encrypts scalar values in the exponent, which enables seamless integration with zero-knowledge proof systems designed for Pedersen commitments.
+
+<Note>
+From `zk-sdk/src/encryption/elgamal.rs:1-15`:
+
+A twisted ElGamal ciphertext consists of two components:
+- A **Pedersen commitment** that encodes the message to be encrypted
+- A **decryption handle** that binds the Pedersen opening to a specific public key
+
+This design allows proof systems designed for Pedersen commitments to work directly on ElGamal ciphertexts.
+</Note>
+
+## Core Data Structures
+
+### ElGamalKeypair
+
+The keypair contains both public and secret keys, with automatic zeroization for security:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:149-156
+#[derive(Clone, Deserialize, PartialEq, Eq, Serialize, Zeroize)]
+#[zeroize(drop)]
+pub struct ElGamalKeypair {
+    /// The public half of this keypair
+    public: ElGamalPubkey,
+    /// The secret half of this keypair (zeroized on drop)
+    secret: ElGamalSecretKey,
+}
+```
+
+### ElGamalPubkey
+
+The public key is a Ristretto point used for encryption:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:341-342
+pub struct ElGamalPubkey(RistrettoPoint);
+
+impl ElGamalPubkey {
+    /// Derives the ElGamalPubkey from a secret key
+    pub fn new(secret: &ElGamalSecretKey) -> Self {
+        let s = &secret.0;
+        assert!(s != &Scalar::ZERO);
+        ElGamalPubkey(s.invert() * &(*H))
+    }
+}
+```
+
+<Info>
+The public key derivation is `pubkey = s^(-1) * H`, where `s` is the secret scalar and `H` is the Pedersen base point. This unusual construction (using the inverse) is what makes the scheme "twisted".
+</Info>
+
+### ElGamalSecretKey
+
+The secret key is a scalar field element:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:452-454
+#[derive(Clone, Deserialize, Serialize, Zeroize)]
+#[zeroize(drop)]
+pub struct ElGamalSecretKey(Scalar);
+```
+
+### ElGamalCiphertext
+
+A ciphertext contains a Pedersen commitment and a decryption handle:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:647-651
+pub struct ElGamalCiphertext {
+    pub commitment: PedersenCommitment,
+    pub handle: DecryptHandle,
+}
+
+// Size: 64 bytes (32 + 32)
+pub const ELGAMAL_CIPHERTEXT_LEN: usize = 64;
+```
+
+### DecryptHandle
+
+The decryption handle binds a Pedersen opening to a specific public key:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:784-789
+pub struct DecryptHandle(RistrettoPoint);
+
+impl DecryptHandle {
+    pub fn new(public: &ElGamalPubkey, opening: &PedersenOpening) -> Self {
+        Self(&public.0 * opening.get_scalar())
+    }
+}
+```
+
+## Key Generation
+
+### Random Key Generation
+
+Generate a fresh keypair using cryptographically secure randomness:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+// Generate a random keypair (uses OsRng internally)
+let keypair = ElGamalKeypair::new_rand();
+
+let pubkey = keypair.pubkey();
+let secret = keypair.secret();
+```
+
+**Implementation** (from `zk-sdk/src/encryption/elgamal.rs:58-62`):
+
+```rust
+fn keygen() -> ElGamalKeypair {
+    // Secret scalar should be non-zero except with negligible probability
+    let s = Zeroizing::new(Scalar::random(&mut OsRng));
+    Self::keygen_with_scalar(&s)
+}
+```
+
+### Deterministic Key Derivation
+
+Derive a keypair from a seed (useful for wallet integration):
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+use solana_seed_derivable::SeedDerivable;
+
+// Derive from a 32-byte seed
+let seed = b"your-32-byte-seed-goes-here!!!!";
+let keypair = ElGamalKeypair::from_seed(seed)?;
+```
+
+<Warning>
+The seed must be at least 32 bytes and at most 65535 bytes. Seeds shorter than 32 bytes will return `ElGamalError::SeedLengthTooShort`.
+</Warning>
+
+### Derive from Solana Signer
+
+For wallet integration, derive an ElGamal keypair from a Solana signer:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+use solana_keypair::Keypair;
+
+let solana_keypair = Keypair::new();
+let public_seed = b"my-elgamal-key";
+
+// Derives by signing the seed and hashing the signature
+let elgamal_keypair = ElGamalKeypair::new_from_signer(
+    &solana_keypair,
+    public_seed
+)?;
+```
+
+**How it works** (from `zk-sdk/src/encryption/elgamal.rs:514-531`):
+
+```rust
+pub fn seed_from_signer(
+    signer: &dyn Signer,
+    public_seed: &[u8],
+) -> Result<Vec<u8>, SignerError> {
+    let message = [b"ElGamalSecretKey", public_seed].concat();
+    let signature = signer.try_sign_message(&message)?;
+    
+    // Hash the signature to derive the seed
+    Ok(Self::seed_from_signature(&signature))
+}
+```
+
+<Info>
+This approach allows users to derive ElGamal keys on-the-fly from their Solana wallet without storing separate keypairs.
+</Info>
+
+## Encryption
+
+### Basic Encryption
+
+Encrypt a value using a public key:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::{ElGamalKeypair, ElGamalPubkey};
+
+let keypair = ElGamalKeypair::new_rand();
+let pubkey = keypair.pubkey();
+
+// Encrypt an amount
+let amount = 1000u64;
+let ciphertext = pubkey.encrypt(amount);
+
+// Ciphertext is randomized - encrypting the same value twice
+// produces different ciphertexts
+let ciphertext2 = pubkey.encrypt(amount);
+assert_ne!(ciphertext.to_bytes(), ciphertext2.to_bytes());
+```
+
+**Implementation** (from `zk-sdk/src/encryption/elgamal.rs:78-83`):
+
+```rust
+fn encrypt<T: Into<Scalar>>(public: &ElGamalPubkey, amount: T) -> ElGamalCiphertext {
+    let (commitment, opening) = Pedersen::new(amount);
+    let handle = public.decrypt_handle(&opening);
+    
+    ElGamalCiphertext { commitment, handle }
+}
+```
+
+### Encryption with Custom Opening
+
+For advanced use cases, encrypt with a specific Pedersen opening:
+
+```rust
+use solana_zk_sdk::encryption::{
+    elgamal::ElGamalKeypair,
+    pedersen::PedersenOpening,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let pubkey = keypair.pubkey();
+
+// Create or reuse a Pedersen opening
+let opening = PedersenOpening::new_rand();
+
+// Encrypt with the specific opening
+let amount = 500u64;
+let ciphertext = pubkey.encrypt_with(amount, &opening);
+```
+
+<Note>
+Encrypting with a custom opening is useful when you need to prove relationships between multiple ciphertexts or commitments using the same randomness.
+</Note>
+
+## Decryption
+
+### Decrypt Small Values
+
+Decrypt values that fit in 32 bits (up to 2^32 - 1):
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+let keypair = ElGamalKeypair::new_rand();
+let pubkey = keypair.pubkey();
+let secret = keypair.secret();
+
+// Encrypt a value
+let amount = 42u64;
+let ciphertext = pubkey.encrypt(amount);
+
+// Decrypt back to the original value
+let decrypted = secret.decrypt_u32(&ciphertext);
+assert_eq!(decrypted, Some(amount));
+```
+
+<Warning>
+The `decrypt_u32` method returns `None` if:
+- The value is larger than 2^32 - 1
+- The ciphertext was encrypted under a different public key
+- The discrete logarithm cannot be computed
+
+This method is **not constant-time** and should only be used after verification.
+</Warning>
+
+### Decrypt Arbitrary Values
+
+For larger values or when you need more control:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+let keypair = ElGamalKeypair::new_rand();
+let secret = keypair.secret();
+let ciphertext = keypair.pubkey().encrypt(1_000_000u64);
+
+// Returns a DiscreteLog instance
+let discrete_log = secret.decrypt(&ciphertext);
+
+// Solve the discrete log with default settings (single-threaded)
+let decrypted = discrete_log.decode_u32();
+assert_eq!(decrypted, Some(1_000_000));
+```
+
+**Multi-threaded decryption**:
+
+```rust
+let mut discrete_log = secret.decrypt(&ciphertext);
+
+// Use 4 threads for faster decryption
+discrete_log.num_threads(4.try_into().unwrap())?;
+let decrypted = discrete_log.decode_u32()?;
+```
+
+## Homomorphic Operations
+
+### Addition
+
+Add two encrypted values:
+
+```rust
+let amount_1 = 100u64;
+let amount_2 = 200u64;
+
+let ciphertext_1 = pubkey.encrypt(amount_1);
+let ciphertext_2 = pubkey.encrypt(amount_2);
+
+// Homomorphic addition
+let ciphertext_sum = ciphertext_1 + ciphertext_2;
+
+// Decrypts to 300
+let decrypted = secret.decrypt_u32(&ciphertext_sum);
+assert_eq!(decrypted, Some(300));
+```
+
+Add a public constant to an encrypted value:
+
+```rust
+let ciphertext = pubkey.encrypt(100u64);
+
+// Add 50 to the encrypted value
+let ciphertext_plus_50 = ciphertext.add_amount(50u64);
+
+// Decrypts to 150
+assert_eq!(secret.decrypt_u32(&ciphertext_plus_50), Some(150));
+```
+
+### Subtraction
+
+Subtract encrypted values:
+
+```rust
+let ciphertext_1 = pubkey.encrypt(500u64);
+let ciphertext_2 = pubkey.encrypt(200u64);
+
+let ciphertext_diff = ciphertext_1 - ciphertext_2;
+assert_eq!(secret.decrypt_u32(&ciphertext_diff), Some(300));
+```
+
+Subtract a public constant:
+
+```rust
+let ciphertext = pubkey.encrypt(1000u64);
+let ciphertext_minus_100 = ciphertext.subtract_amount(100u64);
+assert_eq!(secret.decrypt_u32(&ciphertext_minus_100), Some(900));
+```
+
+### Scalar Multiplication
+
+Multiply an encrypted value by a public scalar:
+
+```rust
+use curve25519_dalek::scalar::Scalar;
+
+let ciphertext = pubkey.encrypt(50u64);
+let scalar = Scalar::from(3u64);
+
+// Multiply by 3
+let ciphertext_times_3 = ciphertext * scalar;
+assert_eq!(secret.decrypt_u32(&ciphertext_times_3), Some(150));
+
+// Scalar multiplication is commutative
+let ciphertext_times_3_v2 = scalar * ciphertext;
+assert_eq!(ciphertext_times_3, ciphertext_times_3_v2);
+```
+
+## Serialization
+
+### Ciphertext Serialization
+
+```rust
+// To bytes (64 bytes: 32 for commitment + 32 for handle)
+let bytes = ciphertext.to_bytes();
+assert_eq!(bytes.len(), 64);
+
+// From bytes
+let ciphertext_restored = ElGamalCiphertext::from_bytes(&bytes)
+    .expect("Invalid ciphertext bytes");
+```
+
+### Keypair Serialization
+
+Save and load keypairs as JSON:
+
+```rust
+use std::fs::File;
+use solana_signer::EncodableKey;
+
+let keypair = ElGamalKeypair::new_rand();
+
+// Write to file
+keypair.write_json_file("my-keypair.json")?;
+
+// Read from file
+let loaded_keypair = ElGamalKeypair::read_json_file("my-keypair.json")?;
+
+assert_eq!(keypair.pubkey(), loaded_keypair.pubkey());
+```
+
+### Public Key Display
+
+Public keys can be displayed as base64 strings:
+
+```rust
+let pubkey = keypair.pubkey();
+
+// Display as base64
+let base64_str = pubkey.to_string();
+println!("Public key: {}", base64_str);
+```
+
+## Security Considerations
+
+### Discrete Log Limitation
+
+<Warning>
+Since messages are encrypted "in the exponent", decryption requires solving a discrete logarithm. This limits practical decryption to values up to ~2^32. For confidential token amounts, this is not a limitation.
+</Warning>
+
+### Constant-Time Operations
+
+Secret keys implement constant-time equality:
+
+```rust
+// From zk-sdk/src/encryption/elgamal.rs:640-644
+impl ConstantTimeEq for ElGamalSecretKey {
+    fn ct_eq(&self, other: &Self) -> Choice {
+        self.0.ct_eq(&other.0)
+    }
+}
+```
+
+### Automatic Zeroization
+
+Secret keys are automatically zeroized when dropped:
+
+```rust
+#[derive(Zeroize)]
+#[zeroize(drop)]
+pub struct ElGamalSecretKey(Scalar);
+```
+
+### Invalid Key Detection
+
+```rust
+// Zero scalars are rejected
+pub fn new(secret: &ElGamalSecretKey) -> Self {
+    let s = &secret.0;
+    assert!(s != &Scalar::ZERO);  // Panics on zero
+    ElGamalPubkey(s.invert() * &(*H))
+}
+```
+
+## Common Patterns
+
+### Pattern: Encrypted Balance Updates
+
+```rust
+// Encrypt initial balance
+let balance = pubkey.encrypt(1000u64);
+
+// Add a deposit
+let deposit = pubkey.encrypt(500u64);
+let new_balance = balance + deposit;
+
+// Subtract a withdrawal
+let new_balance = new_balance.subtract_amount(200u64);
+
+// Final balance: 1300
+assert_eq!(secret.decrypt_u32(&new_balance), Some(1300));
+```
+
+### Pattern: Split a Ciphertext
+
+```rust
+// Split an encrypted amount into two parts
+let total = pubkey.encrypt(1000u64);
+let part1 = pubkey.encrypt(600u64);
+let part2 = total - part1;
+
+assert_eq!(secret.decrypt_u32(&part2), Some(400));
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Pedersen Commitments" icon="shield" href="/concepts/pedersen-commitments">
+    Learn about the commitment scheme underlying ElGamal ciphertexts
+  </Card>
+  <Card title="Zero-Knowledge Proofs" icon="fingerprint" href="/concepts/zero-knowledge-proofs">
+    Create proofs about encrypted values without revealing them
+  </Card>
+</CardGroup>

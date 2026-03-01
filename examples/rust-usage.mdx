@@ -1,0 +1,354 @@
+---
+title: Rust Usage Examples
+description: Learn how to use the ZK ElGamal Proof SDK in Rust applications
+---
+
+This guide demonstrates how to use the ZK ElGamal Proof SDK in Rust applications with real working examples.
+
+## Installation
+
+Add the dependency to your `Cargo.toml`:
+
+```toml
+[dependencies]
+solana-zk-sdk = "0.1.0"
+```
+
+## Basic Key Generation
+
+### Generating an ElGamal Keypair
+
+The SDK provides multiple ways to generate ElGamal keypairs:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalKeypair;
+
+// Generate a random keypair
+let keypair = ElGamalKeypair::new_rand();
+
+// Access the public key
+let pubkey = keypair.pubkey();
+
+// Access the secret key (use with caution)
+let secret = keypair.secret();
+```
+
+### Key Derivation from Seed
+
+You can derive deterministic keys from a seed:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalSecretKey;
+use solana_seed_derivable::SeedDerivable;
+
+// Derive from seed phrase
+let secret_key = ElGamalSecretKey::from_seed_phrase_and_passphrase(
+    "your seed phrase here",
+    "optional passphrase"
+)?;
+
+// Or from raw seed bytes
+let seed = b"your 32-byte seed here...";
+let secret_key = ElGamalSecretKey::from_seed(seed)?;
+```
+
+### Key Derivation from Solana Signer
+
+Derive ElGamal keys from an existing Solana signer:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::ElGamalSecretKey;
+use solana_signer::Signer;
+
+let signer: &dyn Signer = /* your Solana signer */;
+let public_seed = b"ElGamalKey";
+
+let secret_key = ElGamalSecretKey::new_from_signer(
+    signer,
+    public_seed
+)?;
+```
+
+## Encryption and Decryption
+
+### Basic Encryption
+
+Encrypt values using ElGamal encryption:
+
+```rust
+use solana_zk_sdk::encryption::elgamal::{ElGamalKeypair, ElGamalCiphertext};
+
+let keypair = ElGamalKeypair::new_rand();
+let amount = 100u64;
+
+// Encrypt a u64 value
+let ciphertext = keypair.pubkey().encrypt_u64(amount);
+
+// Encrypt with explicit Pedersen opening
+use solana_zk_sdk::encryption::pedersen::PedersenOpening;
+
+let opening = PedersenOpening::new_rand();
+let ciphertext_with_opening = keypair.pubkey().encrypt_with(
+    amount,
+    &opening
+);
+```
+
+### Decryption with Discrete Log
+
+Since messages are encrypted in the exponent, decryption requires solving the discrete log:
+
+```rust
+use solana_zk_sdk::encryption::discrete_log::DiscreteLog;
+
+let keypair = ElGamalKeypair::new_rand();
+let amount = 100u64;
+let ciphertext = keypair.pubkey().encrypt_u64(amount);
+
+// Decrypt (for small values)
+let decrypted_amount = keypair.secret().decrypt_u32(&ciphertext);
+
+// For larger values, use discrete log lookup table
+let discrete_log = DiscreteLog::new(
+    16, // lookup table size parameter
+    1,  // number of threads
+);
+
+let handle = ciphertext.handle;
+let decrypted = discrete_log.decode_u32(&handle);
+```
+
+## Creating Zero-Knowledge Proofs
+
+### Pubkey Validity Proof
+
+Prove that you know the secret key for a given public key:
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::proof_data::PubkeyValidityProofData,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+
+// Create the proof
+let proof_data = PubkeyValidityProofData::new(&keypair)
+    .map_err(|e| format!("Failed to create proof: {:?}", e))?;
+
+// Verify the proof
+proof_data.verify_proof()
+    .map_err(|e| format!("Proof verification failed: {:?}", e))?;
+
+// Serialize to bytes for on-chain verification
+let proof_bytes = proof_data.to_bytes();
+```
+
+### Ciphertext-Ciphertext Equality Proof
+
+Prove that two ciphertexts encrypt the same value under different public keys:
+
+```rust
+use solana_zk_sdk::{
+    encryption::{
+        elgamal::{ElGamalKeypair, ElGamalCiphertext},
+        pedersen::PedersenOpening,
+    },
+    zk_elgamal_proof_program::proof_data::CiphertextCiphertextEqualityProofData,
+};
+
+let keypair1 = ElGamalKeypair::new_rand();
+let keypair2 = ElGamalKeypair::new_rand();
+let amount = 55u64;
+
+// Encrypt the same value under two different keys
+let ciphertext1 = keypair1.pubkey().encrypt_u64(amount);
+
+let opening2 = PedersenOpening::new_rand();
+let ciphertext2 = keypair2.pubkey().encrypt_with(amount, &opening2);
+
+// Create equality proof
+let proof_data = CiphertextCiphertextEqualityProofData::new(
+    &keypair1,
+    keypair2.pubkey(),
+    &ciphertext1,
+    &ciphertext2,
+    &opening2,
+    amount,
+).map_err(|e| format!("Failed to create proof: {:?}", e))?;
+
+// Verify the proof
+proof_data.verify_proof()
+    .map_err(|e| format!("Proof verification failed: {:?}", e))?;
+```
+
+### Zero Ciphertext Proof
+
+Prove that a ciphertext encrypts zero:
+
+```rust
+use solana_zk_sdk::{
+    encryption::{
+        elgamal::ElGamalKeypair,
+        pedersen::PedersenOpening,
+    },
+    zk_elgamal_proof_program::proof_data::ZeroCiphertextProofData,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let opening = PedersenOpening::new_rand();
+
+// Encrypt zero
+let zero_ciphertext = keypair.pubkey().encrypt_with(0u64, &opening);
+
+// Create zero proof
+let proof_data = ZeroCiphertextProofData::new(
+    &keypair,
+    &zero_ciphertext,
+    &opening,
+).map_err(|e| format!("Failed to create proof: {:?}", e))?;
+
+// Verify the proof
+proof_data.verify_proof()
+    .map_err(|e| format!("Proof verification failed: {:?}", e))?;
+```
+
+## Range Proofs
+
+### Batched Range Proof for u64
+
+Prove that multiple committed values are within specified bit ranges:
+
+```rust
+use solana_zk_sdk::{
+    encryption::pedersen::{PedersenCommitment, PedersenOpening},
+    zk_elgamal_proof_program::proof_data::BatchedRangeProofU64Data,
+};
+
+// Create commitments for multiple values
+let amount1 = 255u64;  // 8-bit value
+let amount2 = (1u64 << 56) - 1;  // 56-bit value
+
+let opening1 = PedersenOpening::new_rand();
+let opening2 = PedersenOpening::new_rand();
+
+let commitment1 = PedersenCommitment::new(amount1, &opening1);
+let commitment2 = PedersenCommitment::new(amount2, &opening2);
+
+// Create batched range proof
+let commitments = vec![commitment1, commitment2];
+let amounts = vec![amount1, amount2];
+let bit_lengths = vec![8u8, 56u8];  // Specify bit ranges
+let openings = vec![&opening1, &opening2];
+
+let proof_data = BatchedRangeProofU64Data::new(
+    commitments,
+    amounts,
+    bit_lengths,
+    openings,
+).map_err(|e| format!("Failed to create range proof: {:?}", e))?;
+
+// Verify the proof
+proof_data.verify_proof()
+    .map_err(|e| format!("Range proof verification failed: {:?}", e))?;
+```
+
+## Working with Pedersen Commitments
+
+### Creating Commitments
+
+```rust
+use solana_zk_sdk::encryption::pedersen::{
+    PedersenCommitment, 
+    PedersenOpening,
+    Pedersen,
+};
+
+// Create a commitment with random opening
+let amount = 1000u64;
+let opening = PedersenOpening::new_rand();
+let commitment = PedersenCommitment::new(amount, &opening);
+
+// Or use the Pedersen struct
+let (commitment, opening) = Pedersen::new(amount);
+```
+
+### Homomorphic Operations
+
+Pedersen commitments support homomorphic addition:
+
+```rust
+use solana_zk_sdk::encryption::pedersen::{PedersenCommitment, PedersenOpening};
+
+let amount1 = 100u64;
+let amount2 = 200u64;
+
+let opening1 = PedersenOpening::new_rand();
+let opening2 = PedersenOpening::new_rand();
+
+let commitment1 = PedersenCommitment::new(amount1, &opening1);
+let commitment2 = PedersenCommitment::new(amount2, &opening2);
+
+// Add commitments (homomorphic property)
+let sum_commitment = commitment1 + commitment2;
+let sum_opening = &opening1 + &opening2;
+
+// The sum commitment commits to (amount1 + amount2)
+let expected = PedersenCommitment::new(amount1 + amount2, &sum_opening);
+assert_eq!(sum_commitment, expected);
+```
+
+## Serialization
+
+### Converting to/from Bytes
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::{ElGamalKeypair, ElGamalPubkey},
+    zk_elgamal_proof_program::proof_data::PubkeyValidityProofData,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+
+// Serialize public key
+let pubkey_bytes: [u8; 32] = keypair.pubkey().into();
+
+// Deserialize public key
+let pubkey = ElGamalPubkey::try_from(&pubkey_bytes[..])?;
+
+// Serialize proof data
+let proof_data = PubkeyValidityProofData::new(&keypair)?;
+let proof_bytes = proof_data.to_bytes();
+
+// Deserialize proof data
+let deserialized_proof = PubkeyValidityProofData::try_from(&proof_bytes[..])?;
+```
+
+## Error Handling
+
+All proof operations return `Result` types:
+
+```rust
+use solana_zk_sdk::{
+    encryption::elgamal::ElGamalKeypair,
+    zk_elgamal_proof_program::proof_data::PubkeyValidityProofData,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+
+match PubkeyValidityProofData::new(&keypair) {
+    Ok(proof_data) => {
+        match proof_data.verify_proof() {
+            Ok(_) => println!("Proof verified successfully"),
+            Err(e) => eprintln!("Verification failed: {:?}", e),
+        }
+    },
+    Err(e) => eprintln!("Failed to create proof: {:?}", e),
+}
+```
+
+## Next Steps
+
+- See [JavaScript Usage](/examples/javascript-usage) for client-side integration
+- See [WASM Integration](/examples/wasm-integration) for browser usage
+- Refer to the [Rust SDK Overview](/rust/overview) for detailed API documentation

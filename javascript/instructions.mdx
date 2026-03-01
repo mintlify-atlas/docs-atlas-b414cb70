@@ -1,0 +1,399 @@
+---
+title: 'Instructions'
+description: 'Complete API reference for all instruction types in the JavaScript SDK'
+---
+
+## Instruction Types
+
+The SDK provides two levels of instruction builders:
+
+1. **Action Functions** - High-level helpers that handle account creation and setup
+2. **Generic Instructions** - Low-level instruction builders for fine-grained control
+
+---
+
+## Action Functions
+
+Action functions provide the easiest way to interact with the ZK ElGamal Proof program. They handle rent calculation, account creation, and instruction building automatically.
+
+### verifyZeroCiphertext
+
+Verifies that an ElGamal ciphertext encrypts zero.
+
+**Type Signature:**
+
+```typescript
+function verifyZeroCiphertext(args: VerifyZeroCiphertextArgs): Promise<Instruction[]>
+
+interface VerifyZeroCiphertextArgs {
+  rpc: Rpc<GetMinimumBalanceForRentExemptionApi>;
+  payer: TransactionSigner;
+  proofData: ProofDataInput;
+  contextState?: ContextStateArgs;
+  programId?: Address;
+}
+```
+
+**Parameters:**
+
+- `rpc` - Solana RPC client with rent exemption API
+- `payer` - Transaction fee payer and account creator
+- `proofData` - Either raw proof bytes (Uint8Array) or reference to record account
+- `contextState` (optional) - If provided, creates an account to store the verified proof
+- `programId` (optional) - Custom program address (defaults to `ZkE1Gama1Proof11111111111111111111111111111`)
+
+**Returns:** Array of instructions to execute
+
+**Example:**
+
+```typescript
+import { verifyZeroCiphertext } from '@solana-program/zk-elgamal-proof';
+import { ElGamalKeypair, ZeroCiphertextProofData } from '@solana/zk-sdk/node';
+
+const keypair = new ElGamalKeypair();
+const ciphertext = keypair.pubkey().encryptU64(0n);
+const proof = new ZeroCiphertextProofData(keypair, ciphertext);
+
+const instructions = await verifyZeroCiphertext({
+  rpc: client.rpc,
+  payer,
+  proofData: proof.toBytes(),
+});
+```
+
+**Source:** [src/actions/verifyZeroCiphertext.ts:30](file:///home/daytona/workspace/source/clients/js/src/actions/verifyZeroCiphertext.ts:30)
+
+### verifyPubkeyValidity
+
+Verifies that an ElGamal public key is valid (i.e., the prover knows the corresponding secret key).
+
+**Type Signature:**
+
+```typescript
+function verifyPubkeyValidity(args: VerifyPubkeyValidityArgs): Promise<Instruction[]>
+
+interface VerifyPubkeyValidityArgs {
+  rpc: Rpc<GetMinimumBalanceForRentExemptionApi>;
+  payer: TransactionSigner;
+  proofData: ProofDataInput;
+  contextState?: ContextStateArgs;
+  programId?: Address;
+}
+```
+
+**Parameters:** Same as `verifyZeroCiphertext`
+
+**Returns:** Array of instructions to execute
+
+**Example:**
+
+```typescript
+import { verifyPubkeyValidity } from '@solana-program/zk-elgamal-proof';
+
+const instructions = await verifyPubkeyValidity({
+  rpc: client.rpc,
+  payer,
+  proofData: pubkeyProofBytes,
+});
+```
+
+**Source:** [src/actions/verifyPubkeyValidity.ts:30](file:///home/daytona/workspace/source/clients/js/src/actions/verifyPubkeyValidity.ts:30)
+
+### Other Action Functions
+
+The SDK exports action functions for all proof types:
+
+- `verifyZeroCiphertext`
+- `verifyPubkeyValidity`
+- `verifyPercentageWithCap`
+- `verifyBatchedRangeProofU64`
+- `verifyBatchedRangeProofU128`
+- `verifyBatchedRangeProofU256`
+- `verifyCiphertextCiphertextEquality`
+- `verifyCiphertextCommitmentEquality`
+- `verifyGroupedCiphertext2HandlesValidity`
+- `verifyGroupedCiphertext3HandlesValidity`
+- `verifyBatchedGroupedCiphertext2HandlesValidity`
+- `verifyBatchedGroupedCiphertext3HandlesValidity`
+
+All follow the same pattern as the examples above.
+
+---
+
+## Generic Instructions
+
+For advanced use cases, you can use the low-level instruction builders directly.
+
+### getVerifyProofInstruction
+
+Universal instruction builder for all proof verification types.
+
+**Type Signature:**
+
+```typescript
+function getVerifyProofInstruction<
+  TAccountContextState extends string,
+  TAccountContextStateAuthority extends string,
+  TAccountProofAccount extends string,
+  TProgramAddress extends Address = typeof ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+>(
+  input: VerifyProofInput<
+    TAccountContextState,
+    TAccountContextStateAuthority,
+    TAccountProofAccount
+  >,
+  config?: { programAddress?: TProgramAddress },
+): VerifyProofInstruction<
+  TProgramAddress,
+  TAccountContextState,
+  TAccountContextStateAuthority,
+  TAccountProofAccount
+>
+
+interface VerifyProofInput<
+  TAccountProofAccount extends string = string,
+  TAccountContextState extends string = string,
+  TAccountContextStateAuthority extends string = string,
+> {
+  discriminator: number;
+  proofAccount?: Address<TAccountProofAccount>;
+  contextState?: Address<TAccountContextState>;
+  contextStateAuthority?: Address<TAccountContextStateAuthority> | TransactionSigner<TAccountContextStateAuthority>;
+  offset?: number;
+  proofData?: ReadonlyUint8Array;
+}
+```
+
+**Parameters:**
+
+- `discriminator` - Instruction discriminator (use `ZkElGamalProofInstruction` enum)
+- `proofAccount` (optional) - Account containing proof data
+- `contextState` (optional) - Account to store verified proof
+- `contextStateAuthority` (optional) - Authority for the context state account
+- `offset` (optional) - Byte offset in proof account (default: 0)
+- `proofData` (optional) - Raw proof bytes (mutually exclusive with `proofAccount`)
+
+**Returns:** Instruction object ready to be added to a transaction
+
+**Example:**
+
+```typescript
+import { 
+  getVerifyProofInstruction, 
+  ZkElGamalProofInstruction 
+} from '@solana-program/zk-elgamal-proof';
+
+const instruction = getVerifyProofInstruction({
+  discriminator: ZkElGamalProofInstruction.VerifyZeroCiphertext,
+  proofData: proofBytes,
+  contextState: contextAccount.address,
+  contextStateAuthority: payer,
+});
+```
+
+**Source:** [src/generic/instructions/verifyProof.ts:150](file:///home/daytona/workspace/source/clients/js/src/generic/instructions/verifyProof.ts:150)
+
+### getCloseContextStateInstruction
+
+Closes a context state account and returns rent to the destination account.
+
+**Type Signature:**
+
+```typescript
+function getCloseContextStateInstruction<
+  TAccountContextState extends string,
+  TAccountDestination extends string,
+  TAccountAuthority extends string,
+  TProgramAddress extends Address = typeof ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+>(
+  input: CloseContextStateInput<TAccountContextState, TAccountDestination, TAccountAuthority>,
+  config?: { programAddress?: TProgramAddress },
+): CloseContextStateInstruction<
+  TProgramAddress,
+  TAccountContextState,
+  TAccountDestination,
+  TAccountAuthority
+>
+
+interface CloseContextStateInput<
+  TAccountContextState extends string = string,
+  TAccountDestination extends string = string,
+  TAccountAuthority extends string = string,
+> {
+  contextState: Address<TAccountContextState>;
+  destination: Address<TAccountDestination>;
+  authority: TransactionSigner<TAccountAuthority>;
+}
+```
+
+**Parameters:**
+
+- `contextState` - Address of the context state account to close
+- `destination` - Address to receive the rent lamports
+- `authority` - Authority that owns the context state account (must sign)
+
+**Returns:** Instruction object
+
+**Example:**
+
+```typescript
+import { getCloseContextStateInstruction } from '@solana-program/zk-elgamal-proof';
+
+const closeIx = getCloseContextStateInstruction({
+  contextState: contextAccount.address,
+  destination: payer.address,
+  authority: payer,
+});
+```
+
+**Source:** [src/generic/instructions/closeContextState.ts:92](file:///home/daytona/workspace/source/clients/js/src/generic/instructions/closeContextState.ts:92)
+
+---
+
+## Type Definitions
+
+### ProofDataInput
+
+Union type for specifying where proof data comes from.
+
+```typescript
+type ProofDataInput = 
+  | Uint8Array 
+  | { account: Address; offset: number };
+```
+
+**Source:** [src/actions/shared.ts:3](file:///home/daytona/workspace/source/clients/js/src/actions/shared.ts:3)
+
+### ContextStateArgs
+
+Arguments for creating a context state account.
+
+```typescript
+interface ContextStateArgs {
+  contextAccount: KeyPairSigner;
+  authority: Address;
+}
+```
+
+**Source:** [src/actions/shared.ts:5](file:///home/daytona/workspace/source/clients/js/src/actions/shared.ts:5)
+
+### ZkElGamalProofInstruction
+
+Enum of all instruction discriminators.
+
+```typescript
+enum ZkElGamalProofInstruction {
+  CloseContextState = 0,
+  VerifyZeroCiphertext = 1,
+  VerifyCiphertextCiphertextEquality = 2,
+  VerifyCiphertextCommitmentEquality = 3,
+  VerifyPubkeyValidity = 4,
+  VerifyPercentageWithCap = 5,
+  VerifyBatchedRangeProofU64 = 6,
+  VerifyBatchedRangeProofU128 = 7,
+  VerifyBatchedRangeProofU256 = 8,
+  VerifyGroupedCiphertext2HandlesValidity = 9,
+  VerifyBatchedGroupedCiphertext2HandlesValidity = 10,
+  VerifyGroupedCiphertext3HandlesValidity = 11,
+  VerifyBatchedGroupedCiphertext3HandlesValidity = 12,
+}
+```
+
+**Source:** [src/generic/programs/zkElGamalProof.ts:10](file:///home/daytona/workspace/source/clients/js/src/generic/programs/zkElGamalProof.ts:10)
+
+---
+
+## Constants
+
+### Context Account Sizes
+
+Predefined sizes for context state accounts:
+
+```typescript
+export const CONTEXT_STATE_META_SIZE = 33;
+
+export const ZERO_CIPHERTEXT_CONTEXT_ACCOUNT_SIZE = 129; // 33 + 96
+export const CIPHERTEXT_CIPHERTEXT_EQUALITY_CONTEXT_ACCOUNT_SIZE = 225; // 33 + 192
+export const CIPHERTEXT_COMMITMENT_EQUALITY_CONTEXT_ACCOUNT_SIZE = 161; // 33 + 128
+export const PUBKEY_VALIDITY_CONTEXT_ACCOUNT_SIZE = 65; // 33 + 32
+export const PERCENTAGE_WITH_CAP_CONTEXT_ACCOUNT_SIZE = 137; // 33 + 104
+export const BATCHED_RANGE_PROOF_CONTEXT_ACCOUNT_SIZE = 297; // 33 + 264
+export const GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_CONTEXT_ACCOUNT_SIZE = 193; // 33 + 160
+export const BATCHED_GROUPED_CIPHERTEXT_2_HANDLES_VALIDITY_CONTEXT_ACCOUNT_SIZE = 289; // 33 + 256
+export const GROUPED_CIPHERTEXT_3_HANDLES_VALIDITY_CONTEXT_ACCOUNT_SIZE = 257; // 33 + 224
+export const BATCHED_GROUPED_CIPHERTEXT_3_HANDLES_VALIDITY_CONTEXT_ACCOUNT_SIZE = 385; // 33 + 352
+```
+
+**Source:** [src/constants.ts:1](file:///home/daytona/workspace/source/clients/js/src/constants.ts:1)
+
+### Program Address
+
+```typescript
+export const ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS = 
+  'ZkE1Gama1Proof11111111111111111111111111111' as Address;
+```
+
+**Source:** [src/generic/programs/zkElGamalProof.ts:3](file:///home/daytona/workspace/source/clients/js/src/generic/programs/zkElGamalProof.ts:3)
+
+---
+
+## Advanced Usage
+
+### Encoding and Decoding Instruction Data
+
+For custom use cases, you can manually encode/decode instruction data:
+
+```typescript
+import { 
+  getVerifyProofInstructionDataEncoder,
+  getVerifyProofInstructionDataDecoder,
+} from '@solana-program/zk-elgamal-proof';
+
+const encoder = getVerifyProofInstructionDataEncoder();
+const bytes = encoder.encode({
+  discriminator: 1,
+  proofData: myProofBytes,
+});
+
+const decoder = getVerifyProofInstructionDataDecoder();
+const decoded = decoder.decode(bytes);
+```
+
+### Parsing Instructions
+
+You can parse instruction data from transactions:
+
+```typescript
+import { parseCloseContextStateInstruction } from '@solana-program/zk-elgamal-proof';
+
+const parsed = parseCloseContextStateInstruction(instruction);
+console.log(parsed.accounts.contextState);
+console.log(parsed.accounts.destination);
+console.log(parsed.accounts.authority);
+```
+
+---
+
+## Error Handling
+
+Instructions will throw errors if:
+
+- Required parameters are missing
+- Proof data is invalid
+- Accounts don't have sufficient rent
+- Transaction fails on-chain
+
+Always wrap instruction execution in try-catch blocks:
+
+```typescript
+try {
+  const ixs = await verifyZeroCiphertext({
+    rpc,
+    payer,
+    proofData: invalidProof,
+  });
+  // ... send transaction
+} catch (error) {
+  console.error('Proof verification failed:', error);
+}
+```

@@ -1,0 +1,206 @@
+---
+title: "Grouped Ciphertext Validity Proof"
+description: "Proves that a grouped ElGamal ciphertext is well-formed and can be decrypted"
+---
+
+## Overview
+
+A grouped ciphertext validity proof certifies that a grouped ElGamal ciphertext is well-defined - specifically, that the ciphertext can be decrypted by the private keys associated with its decryption handles. A grouped ciphertext consists of one Pedersen commitment and multiple decryption handles, each encrypted under different public keys.
+
+This proof is crucial for confidential token transfers where multiple parties (source, destination, auditor) need to decrypt portions of the transaction.
+
+The protocol guarantees **computational soundness** and **perfect zero-knowledge** in the random oracle model.
+
+## Proof Variants
+
+The SDK provides proofs for different handle counts:
+
+- **2 Handles**: Most common, used for sender + destination or sender + auditor
+- **3 Handles**: Used for sender + destination + auditor scenarios
+
+<Note>
+  This page focuses on the 2-handle variant, which is the most commonly used in confidential token transfers.
+</Note>
+
+## Proof Structure (2 Handles)
+
+The `GroupedCiphertext2HandlesValidityProof` contains five components:
+
+<ParamField path="Y_0" type="CompressedRistretto">
+  Commitment to the Pedersen commitment: `Y_0 = y_r*H + y_x*G`
+</ParamField>
+
+<ParamField path="Y_1" type="CompressedRistretto">
+  Commitment for the first handle: `Y_1 = y_r*P_first`
+</ParamField>
+
+<ParamField path="Y_2" type="CompressedRistretto">
+  Commitment for the second handle: `Y_2 = y_r*P_second`
+</ParamField>
+
+<ParamField path="z_r" type="Scalar">
+  Masked randomness: `z_r = c*r + y_r`
+</ParamField>
+
+<ParamField path="z_x" type="Scalar">
+  Masked amount: `z_x = c*x + y_x`
+</ParamField>
+
+## Proof Data Context
+
+```rust
+pub struct GroupedCiphertext2HandlesValidityProofContext {
+    pub first_pubkey: PodElGamalPubkey,      // 32 bytes
+    pub second_pubkey: PodElGamalPubkey,     // 32 bytes  
+    pub grouped_ciphertext: PodGroupedElGamalCiphertext2Handles, // 96 bytes
+}
+```
+
+## What is a Grouped Ciphertext?
+
+A grouped ElGamal ciphertext allows multiple parties to decrypt the same encrypted value:
+
+```rust
+pub struct GroupedElGamalCiphertext<const N: usize> {
+    pub commitment: PedersenCommitment,  // Common to all
+    pub handles: [DecryptHandle; N],     // One per recipient
+}
+```
+
+Each handle is computed as `handle_i = r * P_i` where:
+- `r` is the shared randomness
+- `P_i` is the i-th recipient's public key
+
+## Generating a Proof
+
+```rust
+use solana_zk_sdk::{
+    encryption::{
+        elgamal::{ElGamalKeypair, ElGamalPubkey},
+        grouped_elgamal::GroupedElGamal,
+        pedersen::PedersenOpening,
+    },
+    zk_elgamal_proof_program::proof_data::{
+        GroupedCiphertext2HandlesValidityProofData,
+    },
+};
+
+let first_keypair = ElGamalKeypair::new_rand();
+let second_keypair = ElGamalKeypair::new_rand();
+
+let amount: u64 = 100;
+let opening = PedersenOpening::new_rand();
+
+// Encrypt for both parties
+let grouped_ciphertext = GroupedElGamal::encrypt_with(
+    [first_keypair.pubkey(), second_keypair.pubkey()],
+    amount,
+    &opening,
+);
+
+// Prove the grouped ciphertext is valid
+let proof_data = GroupedCiphertext2HandlesValidityProofData::new(
+    first_keypair.pubkey(),
+    second_keypair.pubkey(),
+    &grouped_ciphertext,
+    amount,
+    &opening,
+)?;
+```
+
+## Verification
+
+The verification checks that all handles are correctly derived from the same commitment:
+
+```
+z_r*H + z_x*G - c*C = Y_0
+w*z_r*P_first - w*c*D_first = w*Y_1  
+ww*z_r*P_second - ww*c*D_second = ww*Y_2
+```
+
+Where:
+- `C` is the shared commitment
+- `D_first`, `D_second` are the decryption handles
+- `P_first`, `P_second` are the public keys
+- `c`, `w`, `ww` are challenge scalars
+
+<Note>
+  The first public key and commitment must be non-identity points. However, the second public key is allowed to be identity, as auditor keys can be disabled in Token-2022.
+</Note>
+
+## Use Cases
+
+### Confidential Token Transfers (2 Handles)
+
+1. **Source + Destination**: Prove transfer amount is correctly encrypted for both sender and receiver
+2. **Source + Auditor**: Allow compliance auditing while keeping amounts private
+3. **Destination + Auditor**: Enable regulatory oversight of received amounts
+
+### Multi-Party Scenarios (3 Handles)
+
+- **Source + Destination + Auditor**: Complete transparency for all parties
+- **Split payments**: Prove amounts are correctly divided among recipients
+- **Escrow services**: Allow escrow agent to verify amounts
+
+## Typical Transfer Flow
+
+```rust
+// 1. Sender encrypts transfer amount for recipient and auditor
+let transfer_amount = 100_u64;
+let opening = PedersenOpening::new_rand();
+
+let grouped_ciphertext = GroupedElGamal::encrypt_with(
+    [recipient_pubkey, auditor_pubkey],
+    transfer_amount,
+    &opening,
+);
+
+// 2. Generate validity proof
+let validity_proof = GroupedCiphertext2HandlesValidityProofData::new(
+    recipient_pubkey,
+    auditor_pubkey,
+    &grouped_ciphertext,
+    transfer_amount,
+    &opening,
+)?;
+
+// 3. Generate range proof (separate)
+let range_proof = /* prove transfer_amount is in valid range */;
+
+// 4. Submit transaction with both proofs
+```
+
+## Security Considerations
+
+<Warning>
+  This proof alone does NOT verify:
+  - The committed amount is within valid bounds (use range proofs)
+  - The amount matches other transfer constraints (use equality proofs)
+  - The public keys are valid (use pubkey validity proofs)
+</Warning>
+
+<Warning>
+  The prover must possess the Pedersen opening. Without it, generating a valid proof is computationally infeasible.
+</Warning>
+
+## Proof Size (2 Handles)
+
+Total size: **160 bytes** (5 × 32 bytes)
+- 3 Ristretto points (96 bytes)
+- 2 scalars (64 bytes)
+
+## Batched Variant
+
+For verifying multiple grouped ciphertexts with the same public keys, use the [Batched Grouped Ciphertext Validity Proof](/proofs/batched-grouped-ciphertext-validity) for better efficiency.
+
+## Related Proofs
+
+- [Batched Grouped Ciphertext Validity](/proofs/batched-grouped-ciphertext-validity): Batch verification of multiple grouped ciphertexts
+- [Ciphertext-Commitment Equality](/proofs/ciphertext-commitment-equality): Link ciphertexts with commitments
+- [Public Key Validity](/proofs/pubkey-validity): Verify public keys are well-formed
+
+## Source Code
+
+Sigma proof implementation: `zk-sdk/src/sigma_proofs/grouped_ciphertext_validity/handles_2.rs:47`
+
+Proof data structure: `zk-sdk/src/zk_elgamal_proof_program/proof_data/grouped_ciphertext_validity/handles_2.rs:40`

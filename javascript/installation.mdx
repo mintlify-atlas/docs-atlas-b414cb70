@@ -1,0 +1,193 @@
+---
+title: 'Installation'
+description: 'Install and configure the JavaScript SDK for ZK ElGamal Proof'
+---
+
+## Prerequisites
+
+Before installing the SDK, ensure you have:
+
+- Node.js 16 or higher
+- npm, yarn, or pnpm package manager
+
+## Installation
+
+Install the package using your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install @solana-program/zk-elgamal-proof
+```
+
+```bash yarn
+yarn add @solana-program/zk-elgamal-proof
+```
+
+```bash pnpm
+pnpm add @solana-program/zk-elgamal-proof
+```
+
+</CodeGroup>
+
+## Peer Dependencies
+
+The SDK requires `@solana/kit` as a peer dependency:
+
+<CodeGroup>
+
+```bash npm
+npm install @solana/kit
+```
+
+```bash yarn
+yarn add @solana/kit
+```
+
+```bash pnpm
+pnpm add @solana/kit
+```
+
+</CodeGroup>
+
+## Dependencies
+
+The following dependencies are automatically installed:
+
+- `@solana-program/system` - For creating accounts and system program interactions
+
+## Basic Usage
+
+Once installed, import the SDK in your TypeScript/JavaScript file:
+
+```typescript
+import {
+  verifyZeroCiphertext,
+  verifyPubkeyValidity,
+  getVerifyProofInstruction,
+  ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+} from '@solana-program/zk-elgamal-proof';
+```
+
+## Example: Verify Zero Ciphertext
+
+Here's a complete example showing how to verify a zero ciphertext proof:
+
+```typescript
+import { verifyZeroCiphertext } from '@solana-program/zk-elgamal-proof';
+import { ElGamalKeypair, ZeroCiphertextProofData } from '@solana/zk-sdk/node';
+import { createSolanaRpc, generateKeyPairSigner } from '@solana/kit';
+
+// Setup
+const rpc = createSolanaRpc('https://api.devnet.solana.com');
+const payer = await generateKeyPairSigner();
+
+// Generate a valid zero ciphertext proof
+const keypair = new ElGamalKeypair();
+const ciphertext = keypair.pubkey().encryptU64(0n);
+const proof = new ZeroCiphertextProofData(keypair, ciphertext);
+const proofData = proof.toBytes();
+
+// Create verification instructions
+const instructions = await verifyZeroCiphertext({
+  rpc,
+  payer,
+  proofData,
+});
+
+// Send transaction with the instructions
+// ... transaction sending code
+```
+
+## Example: Verify with Context State
+
+You can also create a context state account to store verified proof data:
+
+```typescript
+import { verifyZeroCiphertext } from '@solana-program/zk-elgamal-proof';
+import { generateKeyPairSigner } from '@solana/kit';
+
+// Create a context account to store the proof
+const contextAccount = await generateKeyPairSigner();
+
+const instructions = await verifyZeroCiphertext({
+  rpc,
+  payer,
+  proofData,
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+// The instructions will:
+// 1. Create the context state account
+// 2. Verify the proof and store it in the context account
+```
+
+## Example: Using Proof from Record Account
+
+For large proofs, you can store them in a record account and reference them:
+
+```typescript
+import { verifyZeroCiphertext } from '@solana-program/zk-elgamal-proof';
+import { createRecord, createWriteInstruction, RECORD_META_DATA_SIZE } from '@solana-program/record';
+
+// First, create and write proof to a record account
+const { recordKeypair, ixs: initIxs } = await createRecord({
+  rpc,
+  payer,
+  authority: recordAuthority.address,
+  dataLength: BigInt(proofData.length),
+});
+
+const writeIx = createWriteInstruction({
+  recordAccount: recordKeypair.address,
+  authority: recordAuthority,
+  offset: 0n,
+  data: proofData,
+});
+
+// Send init and write instructions first
+// ...
+
+// Then verify using the record account
+const verifyIxs = await verifyZeroCiphertext({
+  rpc,
+  payer,
+  proofData: {
+    account: recordKeypair.address,
+    offset: Number(RECORD_META_DATA_SIZE),
+  },
+});
+```
+
+## TypeScript Configuration
+
+For optimal TypeScript support, ensure your `tsconfig.json` includes:
+
+```json
+{
+  "compilerOptions": {
+    "moduleResolution": "bundler",
+    "module": "ES2022",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "skipLibCheck": true
+  }
+}
+```
+
+## Package Exports
+
+The package supports both CommonJS and ES modules:
+
+- **Types**: `./dist/types/index.d.ts`
+- **ESM**: `./dist/src/index.mjs`
+- **CommonJS**: `./dist/src/index.js`
+
+## Next Steps
+
+<Card title="Instructions Reference" icon="book" href="./instructions">
+  Explore all available instructions and their TypeScript signatures
+</Card>

@@ -1,0 +1,546 @@
+---
+title: "Pedersen Commitments"
+description: "Cryptographic commitments with homomorphic properties over Ristretto"
+---
+
+Pedersen commitments are a fundamental building block of the ZK ElGamal Proof SDK. They provide a way to commit to a value without revealing it, while maintaining powerful homomorphic properties that enable arithmetic operations on committed values.
+
+## What is a Pedersen Commitment?
+
+A Pedersen commitment is a cryptographic commitment scheme that allows you to commit to a value `m` with randomness `r`, producing a commitment `C = m*G + r*H`, where:
+
+- **m**: The message (value) being committed to
+- **r**: A random scalar called the "opening" or "blinding factor"
+- **G, H**: Independent base points on the Ristretto group
+- **C**: The resulting commitment (a Ristretto point)
+
+<Info>
+The security of Pedersen commitments relies on the **discrete logarithm assumption**: given `C`, it's computationally infeasible to find `m` and `r` without knowing them, and it's impossible to find the relationship between `G` and `H`.
+</Info>
+
+## Base Points
+
+The SDK uses two base points defined in `zk-sdk/src/encryption/pedersen.rs:20-25`:
+
+```rust
+/// Pedersen base point for encoding messages to be committed
+pub const G: RistrettoPoint = RISTRETTO_BASEPOINT_POINT;
+
+/// Pedersen base point for encoding the commitment openings
+pub static H: std::sync::LazyLock<RistrettoPoint> = std::sync::LazyLock::new(|| {
+    RistrettoPoint::hash_from_bytes::<Sha3_512>(RISTRETTO_BASEPOINT_COMPRESSED.as_bytes())
+});
+```
+
+- **G**: The standard Ristretto basepoint
+- **H**: Derived deterministically by hashing `G` with SHA3-512
+
+<Note>
+The discrete log relationship between `G` and `H` is unknown (computationally infeasible to find), which is essential for the hiding property of the commitment.
+</Note>
+
+## Core Data Structures
+
+### PedersenCommitment
+
+A commitment is a point on the Ristretto group:
+
+```rust
+// From zk-sdk/src/encryption/pedersen.rs:191-192
+pub struct PedersenCommitment(RistrettoPoint);
+
+// Size: 32 bytes (compressed point)
+pub const PEDERSEN_COMMITMENT_LEN: usize = 32;
+```
+
+### PedersenOpening
+
+The opening (or blinding factor) is a scalar that proves knowledge of the committed value:
+
+```rust
+// From zk-sdk/src/encryption/pedersen.rs:78-80
+#[derive(Clone, Default, Zeroize)]
+#[zeroize(drop)]
+pub struct PedersenOpening(Scalar);
+
+// Size: 32 bytes
+pub const PEDERSEN_OPENING_LEN: usize = 32;
+```
+
+<Warning>
+The `PedersenOpening` is automatically zeroized when dropped to prevent sensitive data from lingering in memory.
+</Warning>
+
+## Creating Commitments
+
+### Random Commitment
+
+Create a commitment with random blinding:
+
+```rust
+use solana_zk_sdk::encryption::pedersen::Pedersen;
+
+let amount = 100u64;
+let (commitment, opening) = Pedersen::new(amount);
+
+// The commitment is a point on the curve: C = amount*G + r*H
+// The opening contains the random scalar r
+```
+
+**Implementation** (from `zk-sdk/src/encryption/pedersen.rs:35-40`):
+
+```rust
+pub fn new<T: Into<Scalar>>(amount: T) -> (PedersenCommitment, PedersenOpening) {
+    let opening = PedersenOpening::new_rand();
+    let commitment = Pedersen::with(amount, &opening);
+    (commitment, opening)
+}
+```
+
+### Deterministic Commitment
+
+Create a commitment with a specific opening:
+
+```rust
+use solana_zk_sdk::encryption::pedersen::{Pedersen, PedersenOpening};
+use curve25519_dalek::scalar::Scalar;
+
+let amount = 100u64;
+let opening = PedersenOpening::new(Scalar::from(12345u64));
+
+let commitment = Pedersen::with(amount, &opening);
+
+// Same amount + opening always produces the same commitment
+let commitment2 = Pedersen::with(amount, &opening);
+assert_eq!(commitment, commitment2);
+```
+
+**Implementation** (from `zk-sdk/src/encryption/pedersen.rs:46-51`):
+
+```rust
+pub fn with<T: Into<Scalar>>(amount: T, opening: &PedersenOpening) -> PedersenCommitment {
+    let x: Scalar = amount.into();
+    let r = opening.get_scalar();
+    
+    PedersenCommitment(RistrettoPoint::multiscalar_mul(&[x, *r], &[G, *H]))
+}
+```
+
+### Public Commitment (No Hiding)
+
+For special cases where hiding is not needed:
+
+```rust
+let amount = 50u64;
+
+#[allow(deprecated)]
+let commitment = Pedersen::encode(amount);
+// This is C = amount*G + 0*H = amount*G
+```
+
+<Warning>
+**Deprecated**: The `encode` function creates a commitment with zero blinding (r=0). This is **not hiding** and is vulnerable to dictionary attacks for small values. Only use this in contexts where the value does not need to be confidential.
+</Warning>
+
+## Commitment Properties
+
+### Hiding
+
+A commitment reveals nothing about the committed value:
+
+```rust
+let amount = 1000u64;
+let (commitment1, _) = Pedersen::new(amount);
+let (commitment2, _) = Pedersen::new(amount);
+
+// Even for the same amount, commitments are different due to randomness
+assert_ne!(commitment1.to_bytes(), commitment2.to_bytes());
+
+// Without the opening, the amount cannot be determined
+```
+
+### Binding
+
+Once created, a commitment cannot be opened to a different value:
+
+```rust
+let amount = 100u64;
+let (commitment, opening) = Pedersen::new(amount);
+
+// It's computationally infeasible to find a different (amount', opening')
+// such that Pedersen::with(amount', &opening') == commitment
+```
+
+### Homomorphic Addition
+
+Commitments can be added together:
+
+```rust
+let amount_1 = 100u64;
+let amount_2 = 200u64;
+
+let (commitment_1, opening_1) = Pedersen::new(amount_1);
+let (commitment_2, opening_2) = Pedersen::new(amount_2);
+
+// Add commitments
+let commitment_sum = commitment_1 + commitment_2;
+
+// The sum is a valid commitment to (amount_1 + amount_2)
+// with opening (opening_1 + opening_2)
+let expected_commitment = Pedersen::with(
+    amount_1 + amount_2,
+    &(opening_1 + opening_2)
+);
+
+assert_eq!(commitment_sum, expected_commitment);
+```
+
+**Test case** (from `zk-sdk/src/encryption/pedersen.rs:280-293`):
+
+```rust
+#[test]
+fn test_pedersen_homomorphic_addition() {
+    let amount_0: u64 = 77;
+    let amount_1: u64 = 57;
+
+    let rng = &mut OsRng;
+    let opening_0 = PedersenOpening(Scalar::random(rng));
+    let opening_1 = PedersenOpening(Scalar::random(rng));
+
+    let commitment_0 = Pedersen::with(amount_0, &opening_0);
+    let commitment_1 = Pedersen::with(amount_1, &opening_1);
+    let commitment_addition = Pedersen::with(amount_0 + amount_1, &(opening_0 + opening_1));
+
+    assert_eq!(commitment_addition, commitment_0 + commitment_1);
+}
+```
+
+### Homomorphic Subtraction
+
+Commitments can be subtracted:
+
+```rust
+let amount_1 = 500u64;
+let amount_2 = 200u64;
+
+let (commitment_1, opening_1) = Pedersen::new(amount_1);
+let (commitment_2, opening_2) = Pedersen::new(amount_2);
+
+// Subtract commitments
+let commitment_diff = commitment_1 - commitment_2;
+
+// The difference is a commitment to (amount_1 - amount_2)
+let expected_commitment = Pedersen::with(
+    amount_1 - amount_2,
+    &(opening_1 - opening_2)
+);
+
+assert_eq!(commitment_diff, expected_commitment);
+```
+
+### Scalar Multiplication
+
+Commitments can be multiplied by a known scalar:
+
+```rust
+use curve25519_dalek::scalar::Scalar;
+
+let amount = 50u64;
+let (commitment, opening) = Pedersen::new(amount);
+
+let scalar = Scalar::from(3u64);
+
+// Multiply commitment by scalar
+let commitment_times_3 = commitment * scalar;
+
+// This is a commitment to (amount * 3) with opening (opening * 3)
+let expected_commitment = Pedersen::with(
+    amount * 3,
+    &(opening * scalar)
+);
+
+assert_eq!(commitment_times_3, expected_commitment);
+
+// Scalar multiplication is commutative
+assert_eq!(commitment * scalar, scalar * commitment);
+```
+
+## Working with Openings
+
+### Creating Openings
+
+Generate a random opening:
+
+```rust
+use solana_zk_sdk::encryption::pedersen::PedersenOpening;
+
+let opening = PedersenOpening::new_rand();
+```
+
+Create from a specific scalar:
+
+```rust
+use curve25519_dalek::scalar::Scalar;
+
+let scalar = Scalar::from(42u64);
+let opening = PedersenOpening::new(scalar);
+```
+
+### Opening Arithmetic
+
+Openings support the same arithmetic operations as commitments:
+
+```rust
+let opening_1 = PedersenOpening::new_rand();
+let opening_2 = PedersenOpening::new_rand();
+
+// Addition
+let opening_sum = opening_1 + opening_2;
+
+// Subtraction
+let opening_diff = opening_1 - opening_2;
+
+// Scalar multiplication
+let scalar = Scalar::from(5u64);
+let opening_times_5 = opening_1 * scalar;
+```
+
+### Serialization
+
+Serialize and deserialize openings:
+
+```rust
+// To bytes
+let bytes = opening.to_bytes();
+assert_eq!(bytes.len(), 32);
+
+// From bytes
+let opening_restored = PedersenOpening::from_bytes(&bytes)
+    .expect("Invalid opening bytes");
+
+assert_eq!(opening, opening_restored);
+```
+
+<Warning>
+Openings are sensitive cryptographic material. Always handle them securely and never expose them publicly.
+</Warning>
+
+## Commitment Operations
+
+### Serialization
+
+Commitments can be serialized for storage or transmission:
+
+```rust
+let (commitment, _) = Pedersen::new(100u64);
+
+// To bytes (32 bytes)
+let bytes = commitment.to_bytes();
+assert_eq!(bytes.len(), 32);
+
+// From bytes
+let commitment_restored = PedersenCommitment::from_bytes(&bytes)
+    .expect("Invalid commitment bytes");
+
+assert_eq!(commitment, commitment_restored);
+```
+
+### Accessing the Point
+
+Get the underlying Ristretto point:
+
+```rust
+let (commitment, _) = Pedersen::new(100u64);
+let point = commitment.get_point();
+
+// point is a &RistrettoPoint that can be used for
+// advanced cryptographic operations
+```
+
+## Use Cases in the SDK
+
+### ElGamal Ciphertexts
+
+ElGamal ciphertexts are built from Pedersen commitments:
+
+```rust
+// An ElGamal ciphertext is:
+struct ElGamalCiphertext {
+    commitment: PedersenCommitment,  // m*G + r*H
+    handle: DecryptHandle,           // r*pubkey
+}
+```
+
+### Zero-Knowledge Proofs
+
+Commitments are used as inputs to zero-knowledge proofs:
+
+```rust
+use solana_zk_sdk::zk_elgamal_proof_program::proof_data::CiphertextCommitmentEqualityProofData;
+
+// Prove that a ciphertext and commitment encode the same value
+let proof_data = CiphertextCommitmentEqualityProofData::new(
+    &keypair,
+    &ciphertext,
+    &commitment,
+    &opening,
+    amount,
+)?;
+```
+
+### Range Proofs
+
+Range proofs verify that committed values are in a specific range:
+
+```rust
+use solana_zk_sdk::range_proof::RangeProof;
+use merlin::Transcript;
+
+let amount = 1000u64;
+let (commitment, opening) = Pedersen::new(amount);
+
+let mut transcript = Transcript::new(b"RangeProofTest");
+
+// Prove that amount is a 32-bit value (0 to 2^32-1)
+let proof = RangeProof::new(
+    vec![amount],
+    vec![32],  // bit length
+    vec![&opening],
+    &mut transcript
+)?;
+```
+
+## Common Patterns
+
+### Pattern: Verifiable Sum
+
+Prove that three commitments satisfy `C1 + C2 = C3`:
+
+```rust
+let amount_1 = 100u64;
+let amount_2 = 200u64;
+let amount_3 = 300u64;
+
+let (commitment_1, opening_1) = Pedersen::new(amount_1);
+let (commitment_2, opening_2) = Pedersen::new(amount_2);
+let (commitment_3, opening_3) = Pedersen::new(amount_3);
+
+// Verifier computes:
+let left_side = commitment_1 + commitment_2;
+
+// Check equality
+assert_eq!(left_side, commitment_3);
+// This proves C1 + C2 = C3 holds
+```
+
+### Pattern: Split and Combine
+
+Split a commitment into two parts:
+
+```rust
+let total = 1000u64;
+let part1 = 600u64;
+let part2 = total - part1;
+
+let (commitment_total, opening_total) = Pedersen::new(total);
+let (commitment_part1, opening_part1) = Pedersen::new(part1);
+
+// Compute commitment to part2
+let commitment_part2 = commitment_total - commitment_part1;
+let opening_part2 = opening_total - opening_part1;
+
+// Verify it's correct
+let expected = Pedersen::with(part2, &opening_part2);
+assert_eq!(commitment_part2, expected);
+```
+
+### Pattern: Reusing Openings
+
+Use the same opening for multiple related commitments:
+
+```rust
+let shared_opening = PedersenOpening::new_rand();
+
+let commitment_1 = Pedersen::with(100u64, &shared_opening);
+let commitment_2 = Pedersen::with(200u64, &shared_opening);
+
+// Useful for proving relationships between values
+// while keeping them hidden
+```
+
+## Security Considerations
+
+### Opening Confidentiality
+
+<Warning>
+The opening must remain secret. If an attacker obtains both the commitment and opening, they can compute the committed value.
+</Warning>
+
+### Zero Opening
+
+Commitments with zero opening (r=0) are not hiding:
+
+```rust
+// DON'T DO THIS for sensitive values
+let zero_opening = PedersenOpening::default();
+let commitment = Pedersen::with(42u64, &zero_opening);
+
+// Anyone can verify this by checking C == 42*G
+```
+
+### Commitment Equality
+
+Two commitments being equal does not mean they commit to the same value:
+
+```rust
+// Different (amount, opening) pairs can produce the same commitment
+// but finding such a collision is computationally infeasible
+```
+
+### Automatic Zeroization
+
+Openings are automatically zeroized from memory:
+
+```rust
+#[derive(Clone, Default, Zeroize)]
+#[zeroize(drop)]
+pub struct PedersenOpening(Scalar);
+```
+
+## Performance Considerations
+
+### Multiscalar Multiplication
+
+Commitment creation uses optimized multiscalar multiplication:
+
+```rust
+// From zk-sdk/src/encryption/pedersen.rs:50
+PedersenCommitment(RistrettoPoint::multiscalar_mul(&[x, *r], &[G, *H]))
+```
+
+This is faster than computing `x*G` and `r*H` separately.
+
+### Batch Operations
+
+When working with multiple commitments, consider batching operations:
+
+```rust
+// Instead of:
+let c1 = Pedersen::new(amount1);
+let c2 = Pedersen::new(amount2);
+let c3 = Pedersen::new(amount3);
+
+// Consider creating openings first and batching if possible
+let openings: Vec<_> = (0..3).map(|_| PedersenOpening::new_rand()).collect();
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="ElGamal Encryption" icon="lock" href="/concepts/elgamal-encryption">
+    Learn how Pedersen commitments are used in ElGamal encryption
+  </Card>
+  <Card title="Zero-Knowledge Proofs" icon="fingerprint" href="/concepts/zero-knowledge-proofs">
+    Create proofs about committed values
+  </Card>
+</CardGroup>

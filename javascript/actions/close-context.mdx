@@ -1,0 +1,157 @@
+---
+title: 'closeContextStateProof'
+description: 'Close a context state account and reclaim rent'
+---
+
+## Overview
+
+The `closeContextStateProof` function creates an instruction to close a context state account that was created during proof verification. This allows you to reclaim the rent exemption balance stored in the account.
+
+## Function Signature
+
+```typescript
+function closeContextStateProof({
+  contextState,
+  authority,
+  destination,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: CloseContextStateArgs): Instruction
+```
+
+## Parameters
+
+<ParamField path="contextState" type="Address" required>
+  Address of the context state account to close
+</ParamField>
+
+<ParamField path="authority" type="TransactionSigner" required>
+  Authority that was specified when creating the context state account. Must sign the transaction.
+</ParamField>
+
+<ParamField path="destination" type="Address" required>
+  Address that will receive the reclaimed rent lamports from the closed account
+</ParamField>
+
+<ParamField path="programId" type="Address" optional>
+  ZK ElGamal Proof program address. Defaults to `ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS`
+</ParamField>
+
+## Returns
+
+`Instruction` - Single instruction to close the context state account
+
+## Usage Example
+
+### Basic Context State Closure
+
+Close a context state account after verification:
+
+```typescript
+import { verifyZeroCiphertext, closeContextStateProof } from '@solana/zk-elgamal-proof';
+import { ElGamalKeypair, ZeroCiphertextProofData } from '@solana/zk-sdk/node';
+import { generateKeyPairSigner } from '@solana/kit';
+
+// Create and verify a proof with context state
+const contextAccount = await generateKeyPairSigner();
+const keypair = new ElGamalKeypair();
+const ciphertext = keypair.pubkey().encryptU64(0n);
+const proof = new ZeroCiphertextProofData(keypair, ciphertext);
+
+const verifyIxs = await verifyZeroCiphertext({
+  rpc: client.rpc,
+  payer,
+  proofData: proof.toBytes(),
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, verifyIxs);
+
+// Verify context state account exists
+let accountInfo = await client.rpc
+  .getAccountInfo(contextAccount.address, { encoding: 'base64' })
+  .send();
+console.log('Account exists:', accountInfo.value !== null);
+
+// Close the context state account
+const destination = await generateKeyPairSigner();
+const closeIx = closeContextStateProof({
+  contextState: contextAccount.address,
+  authority: payer, // Must match the authority from creation
+  destination: destination.address,
+});
+
+await sendAndConfirmInstructions(client, payer, [closeIx]);
+
+// Verify account is closed
+accountInfo = await client.rpc
+  .getAccountInfo(contextAccount.address, { encoding: 'base64' })
+  .send();
+console.log('Account closed:', accountInfo.value === null);
+
+// Check destination received rent
+const destBalance = await client.rpc.getBalance(destination.address).send();
+console.log('Destination balance:', destBalance.value);
+```
+
+### Closing Multiple Context States
+
+Close multiple context state accounts in a single transaction:
+
+```typescript
+const closeIxs = contextAccounts.map(contextAccount =>
+  closeContextStateProof({
+    contextState: contextAccount.address,
+    authority: payer,
+    destination: payer.address, // Return rent to payer
+  })
+);
+
+await sendAndConfirmInstructions(client, payer, closeIxs);
+```
+
+## Notes
+
+<Note>
+  **Authority Requirement**
+  
+  The `authority` parameter must match the authority that was specified when creating the context state account. This authority must sign the transaction.
+</Note>
+
+<Note>
+  **Rent Reclamation**
+  
+  When a context state account is closed, all lamports (rent exemption balance) are transferred to the specified `destination` address.
+</Note>
+
+<Warning>
+  **Authority Mismatch**
+  
+  If the provided authority doesn't match the authority stored in the context state account, the transaction will fail.
+</Warning>
+
+## Use Cases
+
+- Cleaning up context state accounts after proof verification is no longer needed
+- Reclaiming rent from temporary proof storage
+- Managing on-chain storage costs by closing unused accounts
+- Batch closing multiple context states to reduce account clutter
+
+## Context State Account Types
+
+Context state accounts can be created by various verification functions:
+
+- [`verifyZeroCiphertext`](/javascript/actions/verify-zero-ciphertext)
+- [`verifyCiphertextCiphertextEquality`](/javascript/actions/verify-ciphertext-equality)
+- [`verifyPubkeyValidity`](/javascript/actions/verify-pubkey-validity)
+- [`verifyBatchedRangeProofU64/U128/U256`](/javascript/actions/verify-range-proofs)
+
+All context state accounts created by these functions can be closed using `closeContextStateProof`.
+
+## Related Functions
+
+- [`verifyZeroCiphertext`](/javascript/actions/verify-zero-ciphertext) - Create context state for zero-ciphertext proofs
+- [`verifyCiphertextCiphertextEquality`](/javascript/actions/verify-ciphertext-equality) - Create context state for equality proofs
+- [`verifyPubkeyValidity`](/javascript/actions/verify-pubkey-validity) - Create context state for public key validity proofs

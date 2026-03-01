@@ -1,0 +1,172 @@
+---
+title: 'verifyPubkeyValidity'
+description: 'Verify that an ElGamal public key is valid and the prover knows the secret key'
+---
+
+## Overview
+
+The `verifyPubkeyValidity` function creates instructions to verify that an ElGamal public key is valid and that the prover knows the corresponding secret key. This is essential for establishing trust in encrypted communications.
+
+## Function Signature
+
+```typescript
+async function verifyPubkeyValidity({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyPubkeyValidityArgs): Promise<Instruction[]>
+```
+
+## Parameters
+
+<ParamField path="rpc" type="Rpc<GetMinimumBalanceForRentExemptionApi>" required>
+  Solana RPC client with rent exemption API support
+</ParamField>
+
+<ParamField path="payer" type="TransactionSigner" required>
+  Transaction signer that will pay for the account creation fees
+</ParamField>
+
+<ParamField path="proofData" type="ProofDataInput" required>
+  The public key validity proof data. Can be either:
+  - `Uint8Array` - Raw proof bytes for ephemeral verification
+  - `{ account: Address; offset: number }` - Reference to proof data stored in a record account
+</ParamField>
+
+<ParamField path="contextState" type="ContextStateArgs" optional>
+  Optional context state configuration for storing the verified proof on-chain:
+  - `contextAccount: KeyPairSigner` - New account to store the proof
+  - `authority: Address` - Authority that can close the context account
+</ParamField>
+
+<ParamField path="programId" type="Address" optional>
+  ZK ElGamal Proof program address. Defaults to `ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS`
+</ParamField>
+
+## Returns
+
+`Promise<Instruction[]>` - Array of instructions to execute:
+1. Create context account instruction (if `contextState` is provided)
+2. Verify public key validity proof instruction
+
+## Usage Examples
+
+### Basic Ephemeral Verification
+
+Prove knowledge of the secret key:
+
+```typescript
+import { verifyPubkeyValidity } from '@solana/zk-elgamal-proof';
+import { ElGamalKeypair, PubkeyValidityProofData } from '@solana/zk-sdk/node';
+
+// Generate keypair and create validity proof
+const keypair = new ElGamalKeypair();
+const proof = new PubkeyValidityProofData(keypair);
+const proofData = proof.toBytes();
+
+// Verify ephemerally
+const ixs = await verifyPubkeyValidity({
+  rpc: client.rpc,
+  payer,
+  proofData,
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+```
+
+### With Context State Storage
+
+Store the verified proof on-chain for later reference:
+
+```typescript
+import { generateKeyPairSigner } from '@solana/kit';
+
+const contextAccount = await generateKeyPairSigner();
+
+const ixs = await verifyPubkeyValidity({
+  rpc: client.rpc,
+  payer,
+  proofData,
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+
+// Verify context account was created
+const account = await client.rpc
+  .getAccountInfo(contextAccount.address, { encoding: 'base64' })
+  .send();
+```
+
+### Using Proof from Record Account
+
+Reference proof data stored in a record account:
+
+```typescript
+import { createRecord, createWriteInstruction, RECORD_META_DATA_SIZE } from '@solana-program/record';
+
+// Initialize record account and write proof
+const recordAuthority = await generateKeyPairSigner();
+const { recordKeypair, ixs: initIxs } = await createRecord({
+  rpc: client.rpc,
+  payer,
+  authority: recordAuthority.address,
+  dataLength: BigInt(proofData.length),
+});
+
+const writeIx = createWriteInstruction({
+  recordAccount: recordKeypair.address,
+  authority: recordAuthority,
+  offset: 0n,
+  data: proofData,
+});
+
+await sendAndConfirmInstructions(client, payer, [...initIxs, writeIx]);
+
+// Verify using record account
+const verifyIxs = await verifyPubkeyValidity({
+  rpc: client.rpc,
+  payer,
+  proofData: {
+    account: recordKeypair.address,
+    offset: Number(RECORD_META_DATA_SIZE),
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, verifyIxs);
+```
+
+## Notes
+
+<Note>
+  **Security Purpose**
+  
+  This proof demonstrates that:
+  - The public key is valid (correctly formed on the elliptic curve)
+  - The prover knows the corresponding secret key
+  
+  This prevents attacks where an adversary uses an invalid or unknown public key.
+</Note>
+
+<Warning>
+  **Invalid Proof Data**
+  
+  If the proof data is invalid or doesn't correctly prove knowledge of the secret key, the transaction will fail during execution.
+</Warning>
+
+## Use Cases
+
+- Establishing identity and key ownership
+- Initializing confidential token accounts
+- Setting up secure encrypted communication channels
+- Verifying public keys before accepting encrypted transfers
+
+## Related Functions
+
+- [`verifyZeroCiphertext`](/javascript/actions/verify-zero-ciphertext) - Verify a ciphertext encrypts zero
+- [`closeContextStateProof`](/javascript/actions/close-context) - Close a context state account

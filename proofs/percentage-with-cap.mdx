@@ -1,0 +1,315 @@
+---
+title: "Percentage with Cap Proof"
+description: "Proves a percentage fee calculation with a maximum cap, ensuring correct fee computation"
+---
+
+## Overview
+
+The percentage-with-cap proof is a specialized proof for fee calculation in confidential token systems. It certifies that a computed fee either equals a maximum cap **OR** is correctly calculated as a percentage of the base amount - without revealing which condition holds.
+
+This proof uses an **OR-composition** technique, proving one of two statements while keeping secret which one is true:
+
+1. The fee equals the maximum cap value
+2. The "delta" commitment equals the "claimed" commitment
+
+The protocol guarantees **computational soundness** and **perfect zero-knowledge** in the random oracle model.
+
+<Note>
+  This proof is specifically designed for Token-2022 confidential transfers where fees are calculated as a percentage with a maximum cap (e.g., "2% fee, max 100 tokens").
+</Note>
+
+## Security Warning
+
+<Warning>
+  This proof alone does NOT guarantee the percentage commitment (fee) is a valid positive integer. It only verifies the algebraic relationship using scalar field arithmetic. 
+  
+  **You MUST also include a separate range proof** on the percentage commitment to prevent field wrap-around attacks. Without a range proof, a malicious prover could craft a "fee" that appears valid but doesn't represent a real value.
+</Warning>
+
+## Fee Calculation Context
+
+In confidential transfers with percentage fees:
+
+```
+fee = min(percentage_rate * amount / 10000, max_fee)
+
+delta = fee * 10000 - amount * percentage_rate
+```
+
+**Two cases:**
+
+1. **Fee is capped**: `fee = max_fee`, so `delta ≠ 0`
+2. **Fee not capped**: `fee < max_fee`, so `delta = 0`
+
+The proof certifies this relationship holds without revealing which case applies.
+
+## Proof Structure
+
+The `PercentageWithCapProof` has two components:
+
+### PercentageMaxProof
+<ParamField path="Y_max_proof" type="CompressedRistretto">
+  Commitment for the max value condition
+</ParamField>
+
+<ParamField path="z_max_proof" type="Scalar">
+  Response for the max value
+</ParamField>
+
+<ParamField path="c_max_proof" type="Scalar">
+  Challenge for the max value branch
+</ParamField>
+
+### PercentageEqualityProof
+<ParamField path="Y_delta" type="CompressedRistretto">
+  Commitment for the delta value
+</ParamField>
+
+<ParamField path="Y_claimed" type="CompressedRistretto">
+  Commitment for the claimed value
+</ParamField>
+
+<ParamField path="z_x" type="Scalar">
+  Masked delta amount
+</ParamField>
+
+<ParamField path="z_delta" type="Scalar">
+  Masked delta opening
+</ParamField>
+
+<ParamField path="z_claimed" type="Scalar">
+  Masked claimed opening
+</ParamField>
+
+## Proof Data Context
+
+```rust
+pub struct PercentageWithCapProofContext {
+    pub percentage_commitment: PodPedersenCommitment,  // Fee commitment
+    pub delta_commitment: PodPedersenCommitment,       // Delta commitment  
+    pub claimed_commitment: PodPedersenCommitment,     // Claimed delta
+    pub max_value: PodU64,                             // Maximum cap
+}
+```
+
+## Generating a Proof
+
+### Case 1: Fee Below Cap
+
+```rust
+use solana_zk_sdk::{
+    encryption::pedersen::Pedersen,
+    zk_elgamal_proof_program::proof_data::PercentageWithCapProofData,
+};
+use curve25519_dalek::scalar::Scalar;
+
+let base_amount = 100_u64;
+let percentage_rate = 200_u16;  // 2.00%
+let max_fee = 50_u64;
+
+// Calculate fee (below cap in this case)
+let fee = 2_u64;  // 2% of 100 = 2
+
+let (base_commitment, base_opening) = Pedersen::new(base_amount);
+let (fee_commitment, fee_opening) = Pedersen::new(fee);
+
+// Calculate delta: fee * 10000 - base * rate
+let delta = fee * 10000 - base_amount * (percentage_rate as u64);  // 0
+let delta_commitment = &fee_commitment * Scalar::from(10000_u64) 
+    - &base_commitment * Scalar::from(percentage_rate);
+let delta_opening = &fee_opening * Scalar::from(10000_u64)
+    - &base_opening * Scalar::from(percentage_rate);
+
+// Delta equals claimed (since fee is not capped)
+let (claimed_commitment, claimed_opening) = Pedersen::new(delta);
+
+// Generate proof
+let proof_data = PercentageWithCapProofData::new(
+    &fee_commitment,
+    &fee_opening,
+    fee,
+    &delta_commitment,
+    &delta_opening,
+    delta,
+    &claimed_commitment,
+    &claimed_opening,
+    max_fee,
+)?;
+```
+
+### Case 2: Fee At Cap
+
+```rust
+let base_amount = 10000_u64;
+let percentage_rate = 200_u16;  // 2.00%  
+let max_fee = 100_u64;
+
+// Fee would be 200, but capped at 100
+let fee = max_fee;
+
+let (base_commitment, base_opening) = Pedersen::new(base_amount);
+let (fee_commitment, fee_opening) = Pedersen::new(fee);
+
+// Delta is non-zero when capped
+let delta = fee * 10000 - base_amount * (percentage_rate as u64);
+let delta_commitment = &fee_commitment * Scalar::from(10000_u64)
+    - &base_commitment * Scalar::from(percentage_rate);
+let delta_opening = &fee_opening * Scalar::from(10000_u64)
+    - &base_opening * Scalar::from(percentage_rate);
+
+// Claimed can be anything (proof simulates equality branch)
+let (claimed_commitment, claimed_opening) = Pedersen::new(0_u64);
+
+let proof_data = PercentageWithCapProofData::new(
+    &fee_commitment,
+    &fee_opening,
+    fee,
+    &delta_commitment,
+    &delta_opening,
+    delta,
+    &claimed_commitment,
+    &claimed_opening,
+    max_fee,
+)?;
+```
+
+## How OR-Composition Works
+
+The proof uses **simulation** to hide which branch is true:
+
+1. **Generate both proofs**: Create one real proof and one simulated proof
+2. **Random selection**: Use constant-time selection based on actual condition
+3. **Challenge splitting**: Split challenge `c = c_max + c_equality` so both branches appear valid
+
+The verifier cannot tell which proof is real and which is simulated.
+
+```rust
+// Prover computes both branches
+let proof_above_max = /* Real proof if fee == max_value */;
+let proof_below_max = /* Real proof if fee < max_value */;
+
+// Select correct proof in constant time
+let below_max = constant_time_compare(fee, max_value);
+let final_proof = conditional_select(
+    proof_above_max,
+    proof_below_max,
+    below_max,
+);
+```
+
+## Verification
+
+The verifier checks both branches with split challenges:
+
+```
+c = c_max_proof + c_equality
+
+// Max branch:
+c_max_proof * C_percentage - c_max_proof * m * G + z_max * H = Y_max_proof
+
+// Equality branch:  
+w * z_x * G + w * z_delta * H - w * c_equality * C_delta = w * Y_delta
+ww * z_x * G + ww * z_claimed * H - ww * c_equality * C_claimed = ww * Y_claimed
+```
+
+If the verification passes, exactly one of the two conditions holds (but verifier doesn't know which).
+
+## Use Cases
+
+### Confidential Transfer Fees
+
+```rust
+// Token transfer with 0.5% fee, max 1000 tokens
+let transfer_amount = /* encrypted */;
+let fee_rate = 50;  // 0.5% = 50 basis points
+let max_fee = 1000_u64;
+
+// Compute fee confidentially
+let fee = compute_fee(transfer_amount, fee_rate, max_fee);
+
+// Prove fee is correct
+let fee_proof = PercentageWithCapProofData::new(/* ... */)?;
+
+// Also need range proof!
+let fee_range_proof = BatchedRangeProofU64Data::new(
+    vec![&fee_commitment],
+    vec![fee],
+    vec![64],
+    vec![&fee_opening],
+)?;
+```
+
+### Withdrawal Fees
+
+```rust
+// ATM-style withdrawal: $2 or 3%, whichever is higher
+let withdrawal = 50_u64;
+let min_fee = 2_u64;
+let percentage = 300;  // 3%
+
+// Fee is max(2, 0.03 * 50) = max(2, 1.5) = 2
+let fee = min_fee;
+
+// Prove fee calculation is correct
+```
+
+### Tiered Fee Structures
+
+Combine multiple percentage-with-cap proofs for tiered fees:
+- 0-1000: 0.5%, max 5
+- 1000-10000: 0.3%, max 30  
+- 10000+: 0.1%, max 100
+
+## Security Requirements
+
+<Warning>
+  **Required Proofs for Complete Security:**
+  
+  1. **Percentage with cap proof**: Proves fee calculation
+  2. **Range proof on fee**: Proves fee is positive and bounded
+  3. **Range proof on delta**: Proves delta doesn't wrap around
+  4. **Ciphertext-commitment equality**: Links encrypted and committed values
+  
+  All four proofs are necessary to prevent attacks.
+</Warning>
+
+### Why Range Proofs Are Critical
+
+Without range proofs:
+
+```rust
+// Attack: Use field wrap-around
+let malicious_fee = FIELD_MODULUS - 100;  // Appears as -100
+let malicious_delta = FIELD_MODULUS - 1000;  // Appears as -1000
+
+// Percentage proof may verify algebraically,
+// but values are actually negative!
+```
+
+## Proof Size
+
+Total size: **256 bytes** (8 × 32 bytes)
+- 3 Ristretto points (96 bytes)
+- 5 scalars (160 bytes)
+
+## Performance Considerations
+
+The proof generation computes **two complete proofs** and selects one:
+- This is more expensive than single-branch proofs
+- Constant-time selection prevents timing attacks
+- Worth the cost for the privacy guarantee
+
+## Related Proofs
+
+- [Range Proofs](/proofs/range-proofs): Required complement for security
+- [Ciphertext-Commitment Equality](/proofs/ciphertext-commitment-equality): Links encrypted values
+
+## References
+
+For detailed protocol specification, see the [percentage-with-cap design document](https://github.com/anza-xyz/agave/blob/master/docs/src/runtime/zk-docs/percentage_with_cap.pdf).
+
+## Source Code
+
+Sigma proof implementation: `zk-sdk/src/sigma_proofs/percentage_with_cap.rs:76`
+
+Proof data structure: `zk-sdk/src/zk_elgamal_proof_program/proof_data/percentage_with_cap.rs:37`

@@ -1,0 +1,370 @@
+---
+title: "Grouped ElGamal Encryption"
+description: "Multi-recipient ElGamal encryption with shared commitment"
+---
+
+## Overview
+
+The grouped ElGamal module extends the twisted ElGamal encryption scheme to support multiple recipients. A grouped ElGamal ciphertext contains a single Pedersen commitment shared across all recipients, with individual decrypt handles for each recipient's public key.
+
+## Key Concepts
+
+### Shared Commitment Architecture
+
+Instead of creating separate ciphertexts for each recipient, grouped ElGamal:
+- Creates **one Pedersen commitment** encoding the message
+- Generates **multiple decrypt handles**, one per recipient public key
+- Maintains the same opening for all handles
+
+This approach is more efficient than encrypting the same value multiple times.
+
+### Use Cases
+
+- Multi-party protocols requiring shared encrypted values
+- Auditable transactions where multiple parties need decryption access
+- Confidential token transfers with compliance features
+
+## Core Types
+
+### GroupedElGamalCiphertext
+
+A ciphertext with multiple decrypt handles for different recipients.
+
+```rust
+pub struct GroupedElGamalCiphertext<const N: usize> {
+    pub commitment: PedersenCommitment,
+    pub handles: [DecryptHandle; N],
+}
+```
+
+The generic parameter `N` specifies the number of recipients (decrypt handles).
+
+#### Methods
+
+```rust
+// Convert to regular ElGamal ciphertext using handle at index
+pub fn to_elgamal_ciphertext(
+    &self,
+    index: usize,
+) -> Result<ElGamalCiphertext, GroupedElGamalError>
+
+// Decrypt using secret key for handle at index
+pub fn decrypt(
+    &self,
+    secret: &ElGamalSecretKey,
+    index: usize,
+) -> Result<DiscreteLog, GroupedElGamalError>
+
+// Decrypt as u32 (not constant-time)
+pub fn decrypt_u32(
+    &self,
+    secret: &ElGamalSecretKey,
+    index: usize,
+) -> Result<Option<u64>, GroupedElGamalError>
+
+// Serialization
+pub fn to_bytes(&self) -> Vec<u8>
+pub fn from_bytes(bytes: &[u8]) -> Option<Self>
+```
+
+### GroupedElGamal
+
+Algorithm handle for grouped encryption operations.
+
+```rust
+pub struct GroupedElGamal<const N: usize>;
+```
+
+#### Methods
+
+```rust
+// Encrypt for multiple recipients (randomized)
+pub fn encrypt<T: Into<Scalar>>(
+    pubkeys: [&ElGamalPubkey; N],
+    amount: T,
+) -> GroupedElGamalCiphertext<N>
+
+// Encrypt with specified opening (deterministic)
+pub fn encrypt_with<T: Into<Scalar>>(
+    pubkeys: [&ElGamalPubkey; N],
+    amount: T,
+    opening: &PedersenOpening,
+) -> GroupedElGamalCiphertext<N>
+```
+
+### GroupedElGamalError
+
+Errors that can occur during grouped ElGamal operations.
+
+```rust
+pub enum GroupedElGamalError {
+    IndexOutOfBounds,
+}
+```
+
+## Usage Examples
+
+### Basic Encryption for Multiple Recipients
+
+```rust
+use solana_zk_sdk::encryption::{
+    elgamal::ElGamalKeypair,
+    grouped_elgamal::GroupedElGamal,
+};
+
+// Create keypairs for three recipients
+let keypair_0 = ElGamalKeypair::new_rand();
+let keypair_1 = ElGamalKeypair::new_rand();
+let keypair_2 = ElGamalKeypair::new_rand();
+
+let amount: u64 = 10;
+
+// Encrypt for all three recipients
+let grouped_ciphertext = GroupedElGamal::encrypt(
+    [
+        keypair_0.pubkey(),
+        keypair_1.pubkey(),
+        keypair_2.pubkey(),
+    ],
+    amount,
+);
+
+// Each recipient can decrypt using their key and index
+assert_eq!(
+    Some(amount),
+    grouped_ciphertext.decrypt_u32(keypair_0.secret(), 0).unwrap()
+);
+assert_eq!(
+    Some(amount),
+    grouped_ciphertext.decrypt_u32(keypair_1.secret(), 1).unwrap()
+);
+assert_eq!(
+    Some(amount),
+    grouped_ciphertext.decrypt_u32(keypair_2.secret(), 2).unwrap()
+);
+```
+
+### Deterministic Grouped Encryption
+
+```rust
+use solana_zk_sdk::encryption::{
+    elgamal::ElGamalKeypair,
+    grouped_elgamal::GroupedElGamal,
+    pedersen::PedersenOpening,
+};
+
+let keypair_0 = ElGamalKeypair::new_rand();
+let keypair_1 = ElGamalKeypair::new_rand();
+
+let amount: u64 = 50;
+let opening = PedersenOpening::new_rand();
+
+// Encrypt with specified opening
+let ciphertext = GroupedElGamal::encrypt_with(
+    [keypair_0.pubkey(), keypair_1.pubkey()],
+    amount,
+    &opening,
+);
+
+// Same inputs produce same ciphertext
+let ciphertext2 = GroupedElGamal::encrypt_with(
+    [keypair_0.pubkey(), keypair_1.pubkey()],
+    amount,
+    &opening,
+);
+assert_eq!(ciphertext, ciphertext2);
+```
+
+### Converting to Regular ElGamal
+
+```rust
+let keypair_0 = ElGamalKeypair::new_rand();
+let keypair_1 = ElGamalKeypair::new_rand();
+let amount: u64 = 100;
+
+let grouped_ciphertext = GroupedElGamal::encrypt(
+    [keypair_0.pubkey(), keypair_1.pubkey()],
+    amount,
+);
+
+// Extract regular ElGamal ciphertext for first recipient
+let elgamal_ciphertext = grouped_ciphertext.to_elgamal_ciphertext(0).unwrap();
+
+// Can use standard ElGamal decryption
+let decrypted = elgamal_ciphertext.decrypt_u32(keypair_0.secret()).unwrap();
+assert_eq!(amount, decrypted);
+```
+
+### Serialization and Deserialization
+
+```rust
+let keypair_0 = ElGamalKeypair::new_rand();
+let keypair_1 = ElGamalKeypair::new_rand();
+let keypair_2 = ElGamalKeypair::new_rand();
+
+let amount: u64 = 10;
+let grouped_ciphertext = GroupedElGamal::encrypt(
+    [
+        keypair_0.pubkey(),
+        keypair_1.pubkey(),
+        keypair_2.pubkey(),
+    ],
+    amount,
+);
+
+// Serialize to bytes
+let bytes = grouped_ciphertext.to_bytes();
+
+// For 3 recipients: 1 commitment (32 bytes) + 3 handles (32 bytes each) = 128 bytes
+assert_eq!(bytes.len(), 128);
+
+// Deserialize
+let decoded = GroupedElGamalCiphertext::<3>::from_bytes(&bytes).unwrap();
+assert_eq!(
+    Some(amount),
+    decoded.decrypt_u32(keypair_0.secret(), 0).unwrap()
+);
+```
+
+### Working with Zero Recipients
+
+```rust
+let amount: u64 = 42;
+
+// Create grouped ciphertext with no recipients
+let grouped_ciphertext = GroupedElGamal::<0>::encrypt([], amount);
+
+// Only contains the commitment (32 bytes)
+let bytes = grouped_ciphertext.to_bytes();
+assert_eq!(bytes.len(), 32);
+
+// Cannot decrypt (no handles)
+let keypair = ElGamalKeypair::new_rand();
+let result = grouped_ciphertext.decrypt_u32(keypair.secret(), 0);
+assert!(result.is_err());
+```
+
+### Error Handling
+
+```rust
+use solana_zk_sdk::encryption::grouped_elgamal::GroupedElGamalError;
+
+let keypair = ElGamalKeypair::new_rand();
+let amount: u64 = 100;
+
+let grouped_ciphertext = GroupedElGamal::encrypt([keypair.pubkey()], amount);
+
+// Trying to access invalid index returns error
+let result = grouped_ciphertext.decrypt_u32(keypair.secret(), 5);
+assert_eq!(result.unwrap_err(), GroupedElGamalError::IndexOutOfBounds);
+```
+
+### Wrong Key at Valid Index
+
+```rust
+let keypair_0 = ElGamalKeypair::new_rand();
+let keypair_1 = ElGamalKeypair::new_rand();
+let amount: u64 = 50;
+
+let grouped_ciphertext = GroupedElGamal::encrypt(
+    [keypair_0.pubkey(), keypair_1.pubkey()],
+    amount,
+);
+
+// Attempting to decrypt handle 1 with secret key 0 fails
+let result = grouped_ciphertext
+    .decrypt_u32(keypair_0.secret(), 1)
+    .unwrap();
+assert!(result.is_none());
+```
+
+## Byte Layout
+
+The serialized format of a grouped ciphertext with `N` recipients:
+
+```
+[Commitment (32 bytes)] [Handle 0 (32 bytes)] [Handle 1 (32 bytes)] ... [Handle N-1 (32 bytes)]
+```
+
+Total size: `(N + 1) * 32` bytes
+
+Examples:
+- N=0: 32 bytes (commitment only)
+- N=1: 64 bytes
+- N=2: 96 bytes
+- N=3: 128 bytes
+
+## Security Considerations
+
+### Recipient Privacy
+
+All recipients share the same commitment, so:
+- Recipients can verify they received the same encrypted value
+- The number of recipients is visible from the ciphertext size
+- Each recipient needs the correct index to decrypt
+
+### Key-Handle Binding
+
+Each decrypt handle is cryptographically bound to its corresponding public key. Using the wrong secret key at a given index will fail to decrypt correctly.
+
+### Constant-Time Operations
+
+The `decrypt_u32` method is **not constant-time** and may leak information through timing side channels.
+
+### Index Management
+
+Callers must track which index corresponds to which recipient. Using the wrong index will result in decryption failure.
+
+## Practical Considerations
+
+### Space Efficiency
+
+Compared to individual ElGamal ciphertexts:
+- **Individual**: `N * 64` bytes (N separate ciphertexts)
+- **Grouped**: `(N + 1) * 32` bytes
+- **Savings**: `32 * (N - 1)` bytes
+
+For 3 recipients:
+- Individual: 192 bytes
+- Grouped: 128 bytes
+- Savings: 64 bytes (33%)
+
+### When to Use Grouped ElGamal
+
+Use grouped ElGamal when:
+- Multiple parties need to decrypt the same value
+- Space efficiency is important
+- All recipients should be able to verify they received the same encrypted value
+
+Use individual ElGamal when:
+- Recipients should not know about each other
+- Different values need to be sent to different recipients
+- Maximum privacy is required
+
+## Integration with Zero-Knowledge Proofs
+
+Grouped ElGamal ciphertexts work with the same proof systems as regular ElGamal:
+
+```rust
+use solana_zk_sdk::encryption::{
+    elgamal::ElGamalKeypair,
+    grouped_elgamal::GroupedElGamal,
+};
+
+let keypair = ElGamalKeypair::new_rand();
+let auditor = ElGamalKeypair::new_rand();
+
+let amount: u64 = 1000;
+
+// Create ciphertext for user and auditor
+let grouped_ciphertext = GroupedElGamal::encrypt(
+    [keypair.pubkey(), auditor.pubkey()],
+    amount,
+);
+
+// Extract user's ciphertext for proof generation
+let user_ciphertext = grouped_ciphertext.to_elgamal_ciphertext(0).unwrap();
+
+// Generate proofs using user_ciphertext...
+// Auditor can independently decrypt using index 1
+```
