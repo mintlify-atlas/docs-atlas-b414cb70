@@ -1,0 +1,212 @@
+---
+title: 'verifyPercentageWithCap'
+description: 'Verify that a transfer amount is within a percentage of a base amount, capped at a maximum value'
+---
+
+## Overview
+
+The `verifyPercentageWithCap` function creates instructions to verify a percentage-with-cap proof. This proof certifies that a transfer amount is within a certain percentage of a base amount, capped at a maximum value. This is useful for implementing fee structures or transfer limits in confidential transactions.
+
+## Function Signature
+
+```typescript
+async function verifyPercentageWithCap({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyPercentageWithCapArgs): Promise<Instruction[]>
+```
+
+## Parameters
+
+<ParamField path="rpc" type="Rpc<GetMinimumBalanceForRentExemptionApi>" required>
+  Solana RPC client with rent exemption API support
+</ParamField>
+
+<ParamField path="payer" type="TransactionSigner" required>
+  Transaction signer that will pay for the account creation fees
+</ParamField>
+
+<ParamField path="proofData" type="ProofDataInput" required>
+  The percentage-with-cap proof data. Can be either:
+  - `Uint8Array` - Raw proof bytes for ephemeral verification
+  - `{ account: Address; offset: number }` - Reference to proof data stored in a record account
+</ParamField>
+
+<ParamField path="contextState" type="ContextStateArgs" optional>
+  Optional context state configuration for storing the verified proof on-chain:
+  - `contextAccount: KeyPairSigner` - New account to store the proof
+  - `authority: Address` - Authority that can close the context account
+</ParamField>
+
+<ParamField path="programId" type="Address" optional>
+  ZK ElGamal Proof program address. Defaults to `ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS`
+</ParamField>
+
+## Returns
+
+`Promise<Instruction[]>` - Array of instructions to execute:
+1. Create context account instruction (if `contextState` is provided)
+2. Verify percentage-with-cap proof instruction
+
+## Usage Examples
+
+### Basic Ephemeral Verification
+
+Verify that a fee is within an allowed percentage with a cap:
+
+```typescript
+import { verifyPercentageWithCap } from '@solana/zk-elgamal-proof';
+import {
+  PercentageWithCapProofData,
+  PedersenCommitment,
+  PedersenOpening,
+} from '@solana/zk-sdk/node';
+
+// Example: 2% fee with 1000 token cap
+const transferAmount = 100000n; // Transfer amount
+const feeAmount = 1000n; // Fee is capped at 1000 (2% would be 2000)
+const maxFee = 1000n; // Maximum fee cap
+const feeRate = 200; // 2% represented as basis points (200 / 10000)
+
+// Create commitments
+const transferOpening = new PedersenOpening();
+const feeOpening = new PedersenOpening();
+
+const transferCommitment = PedersenCommitment.from(transferAmount, transferOpening);
+const feeCommitment = PedersenCommitment.from(feeAmount, feeOpening);
+
+// Generate percentage-with-cap proof
+const proof = new PercentageWithCapProofData(
+  transferCommitment,
+  feeCommitment,
+  transferAmount,
+  feeAmount,
+  maxFee,
+  feeRate,
+  transferOpening,
+  feeOpening,
+);
+const proofData = proof.toBytes();
+
+// Verify ephemerally
+const ixs = await verifyPercentageWithCap({
+  rpc: client.rpc,
+  payer,
+  proofData,
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+```
+
+### With Context State Storage
+
+Store the verified proof on-chain for later use:
+
+```typescript
+import { generateKeyPairSigner } from '@solana/kit';
+
+const contextAccount = await generateKeyPairSigner();
+
+const ixs = await verifyPercentageWithCap({
+  rpc: client.rpc,
+  payer,
+  proofData,
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+
+// The context account now stores the verified proof
+// and can be referenced by other instructions
+```
+
+### Fee Calculation with Cap
+
+Verify a transaction fee structure:
+
+```typescript
+// Calculate fee with cap logic
+function calculateFee(amount: bigint, rate: number, cap: bigint): bigint {
+  const percentageFee = (amount * BigInt(rate)) / 10000n;
+  return percentageFee > cap ? cap : percentageFee;
+}
+
+const transferAmount = 50000n;
+const feeRate = 150; // 1.5%
+const maxFee = 500n;
+const feeAmount = calculateFee(transferAmount, feeRate, maxFee);
+
+// Create proof showing fee is correctly calculated
+const transferOpening = new PedersenOpening();
+const feeOpening = new PedersenOpening();
+
+const transferCommitment = PedersenCommitment.from(transferAmount, transferOpening);
+const feeCommitment = PedersenCommitment.from(feeAmount, feeOpening);
+
+const proof = new PercentageWithCapProofData(
+  transferCommitment,
+  feeCommitment,
+  transferAmount,
+  feeAmount,
+  maxFee,
+  feeRate,
+  transferOpening,
+  feeOpening,
+);
+
+const ixs = await verifyPercentageWithCap({
+  rpc: client.rpc,
+  payer,
+  proofData: proof.toBytes(),
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+```
+
+## Notes
+
+<Note>
+  **Fee Rate Format**
+  
+  The fee rate is expressed in basis points (1/10000). For example:
+  - 1% = 100 basis points
+  - 2.5% = 250 basis points
+  - 10% = 1000 basis points
+</Note>
+
+<Note>
+  **Proof Requirements**
+  
+  The proof demonstrates that:
+  - The fee amount ≤ min(transfer_amount × rate, max_fee)
+  - The prover knows the openings for both commitments
+  - The committed values match the claimed amounts
+</Note>
+
+<Warning>
+  **Invalid Proof Data**
+  
+  The transaction will fail if:
+  - The fee exceeds the percentage of the transfer amount
+  - The fee exceeds the maximum cap
+  - The proof data is malformed
+</Warning>
+
+## Use Cases
+
+- Implementing confidential transaction fees with percentage-based caps
+- Proving fee calculations are correct without revealing amounts
+- Enforcing transfer limits in confidential token transfers
+- Creating tiered fee structures with maximum caps
+
+## Related Functions
+
+- [`verifyGroupedCiphertext2HandlesValidity`](/javascript/actions/verify-grouped-ciphertext-validity) - Verify grouped ciphertext validity
+- [`verifyRangeProofs`](/javascript/actions/verify-range-proofs) - Verify range proofs
+- [`closeContextStateProof`](/javascript/actions/close-context) - Close a context state account

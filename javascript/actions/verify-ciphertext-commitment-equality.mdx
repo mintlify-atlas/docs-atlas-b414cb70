@@ -1,0 +1,196 @@
+---
+title: 'verifyCiphertextCommitmentEquality'
+description: 'Verify that an ElGamal ciphertext and a Pedersen commitment encrypt/encode the same message'
+---
+
+## Overview
+
+The `verifyCiphertextCommitmentEquality` function creates instructions to verify that an ElGamal ciphertext and a Pedersen commitment encrypt/encode the same plaintext message. This is useful for proving consistency between different encryption schemes without revealing the underlying value.
+
+## Function Signature
+
+```typescript
+async function verifyCiphertextCommitmentEquality({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyCiphertextCommitmentEqualityArgs): Promise<Instruction[]>
+```
+
+## Parameters
+
+<ParamField path="rpc" type="Rpc<GetMinimumBalanceForRentExemptionApi>" required>
+  Solana RPC client with rent exemption API support
+</ParamField>
+
+<ParamField path="payer" type="TransactionSigner" required>
+  Transaction signer that will pay for the account creation fees
+</ParamField>
+
+<ParamField path="proofData" type="ProofDataInput" required>
+  The ciphertext-commitment equality proof data. Can be either:
+  - `Uint8Array` - Raw proof bytes for ephemeral verification
+  - `{ account: Address; offset: number }` - Reference to proof data stored in a record account
+</ParamField>
+
+<ParamField path="contextState" type="ContextStateArgs" optional>
+  Optional context state configuration for storing the verified proof on-chain:
+  - `contextAccount: KeyPairSigner` - New account to store the proof
+  - `authority: Address` - Authority that can close the context account
+</ParamField>
+
+<ParamField path="programId" type="Address" optional>
+  ZK ElGamal Proof program address. Defaults to `ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS`
+</ParamField>
+
+## Returns
+
+`Promise<Instruction[]>` - Array of instructions to execute:
+1. Create context account instruction (if `contextState` is provided)
+2. Verify ciphertext-commitment equality proof instruction
+
+## Usage Examples
+
+### Basic Ephemeral Verification
+
+Verify that a ciphertext and commitment encode the same value:
+
+```typescript
+import { verifyCiphertextCommitmentEquality } from '@solana/zk-elgamal-proof';
+import {
+  ElGamalKeypair,
+  CiphertextCommitmentEqualityProofData,
+  PedersenCommitment,
+  PedersenOpening,
+} from '@solana/zk-sdk/node';
+
+// Create ciphertext and commitment for the same value
+const keypair = new ElGamalKeypair();
+const amount = 100n;
+
+const ciphertext = keypair.pubkey().encryptU64(amount);
+
+const opening = new PedersenOpening();
+const commitment = PedersenCommitment.from(amount, opening);
+
+// Generate equality proof
+const proof = new CiphertextCommitmentEqualityProofData(
+  keypair,
+  ciphertext,
+  commitment,
+  opening,
+  amount,
+);
+const proofData = proof.toBytes();
+
+// Verify ephemerally
+const ixs = await verifyCiphertextCommitmentEquality({
+  rpc: client.rpc,
+  payer,
+  proofData,
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+```
+
+### With Context State Storage
+
+Store the verified proof on-chain:
+
+```typescript
+import { generateKeyPairSigner } from '@solana/kit';
+
+const contextAccount = await generateKeyPairSigner();
+
+const ixs = await verifyCiphertextCommitmentEquality({
+  rpc: client.rpc,
+  payer,
+  proofData,
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+
+// Verify context account was created
+const account = await client.rpc
+  .getAccountInfo(contextAccount.address, { encoding: 'base64' })
+  .send();
+```
+
+### Using Proof from Record Account
+
+Reference proof data stored in a record account:
+
+```typescript
+import { createRecord, createWriteInstruction, RECORD_META_DATA_SIZE } from '@solana-program/record';
+
+// Initialize record account and write proof
+const recordAuthority = await generateKeyPairSigner();
+const { recordKeypair, ixs: initIxs } = await createRecord({
+  rpc: client.rpc,
+  payer,
+  authority: recordAuthority.address,
+  dataLength: BigInt(proofData.length),
+});
+
+const writeIx = createWriteInstruction({
+  recordAccount: recordKeypair.address,
+  authority: recordAuthority,
+  offset: 0n,
+  data: proofData,
+});
+
+await sendAndConfirmInstructions(client, payer, [...initIxs, writeIx]);
+
+// Verify using record account
+const verifyIxs = await verifyCiphertextCommitmentEquality({
+  rpc: client.rpc,
+  payer,
+  proofData: {
+    account: recordKeypair.address,
+    offset: Number(RECORD_META_DATA_SIZE),
+  },
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, verifyIxs);
+```
+
+## Notes
+
+<Note>
+  **Proof Requirements**
+  
+  The proof must demonstrate that the ElGamal ciphertext and Pedersen commitment encode the same plaintext value. The prover needs:
+  - The ElGamal secret key
+  - The ciphertext
+  - The commitment and its opening
+  - The plaintext amount
+</Note>
+
+<Warning>
+  **Invalid Proof Data**
+  
+  If the proof data is invalid or the ciphertext and commitment encode different values, the transaction will fail during execution.
+</Warning>
+
+## Use Cases
+
+- Proving consistency between ElGamal encryption and Pedersen commitments
+- Verifying encrypted values match committed values in hybrid schemes
+- Enabling interoperability between different cryptographic primitives
+- Supporting confidential transactions that use both encryption types
+
+## Related Functions
+
+- [`verifyCiphertextCiphertextEquality`](/javascript/actions/verify-ciphertext-ciphertext-equality) - Verify two ciphertexts encrypt the same message
+- [`verifyZeroCiphertext`](/javascript/actions/verify-zero-ciphertext) - Verify a ciphertext encrypts zero
+- [`closeContextStateProof`](/javascript/actions/close-context) - Close a context state account

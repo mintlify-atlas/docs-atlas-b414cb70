@@ -1,0 +1,222 @@
+---
+title: 'Grouped Ciphertext Validity'
+description: 'Verify that grouped ElGamal ciphertexts with 2 or 3 handles are well-formed'
+---
+
+## Overview
+
+Grouped ciphertext validity functions create instructions to verify that grouped ElGamal ciphertexts are well-formed. These proofs ensure that a ciphertext encrypted to multiple public keys (handles) is correctly constructed, which is essential for confidential transfers involving multiple parties.
+
+## Available Functions
+
+### verifyGroupedCiphertext2HandlesValidity
+
+Verifies that a grouped ElGamal ciphertext with 2 handles is well-formed.
+
+```typescript
+async function verifyGroupedCiphertext2HandlesValidity({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyGroupedCiphertext2HandlesValidityArgs): Promise<Instruction[]>
+```
+
+### verifyGroupedCiphertext3HandlesValidity
+
+Verifies that a grouped ElGamal ciphertext with 3 handles is well-formed.
+
+```typescript
+async function verifyGroupedCiphertext3HandlesValidity({
+  rpc,
+  payer,
+  proofData,
+  contextState,
+  programId = ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS,
+}: VerifyGroupedCiphertext3HandlesValidityArgs): Promise<Instruction[]>
+```
+
+## Parameters
+
+Both functions share the same parameter structure:
+
+<ParamField path="rpc" type="Rpc<GetMinimumBalanceForRentExemptionApi>" required>
+  Solana RPC client with rent exemption API support
+</ParamField>
+
+<ParamField path="payer" type="TransactionSigner" required>
+  Transaction signer that will pay for the account creation fees
+</ParamField>
+
+<ParamField path="proofData" type="ProofDataInput" required>
+  The grouped ciphertext validity proof data. Can be either:
+  - `Uint8Array` - Raw proof bytes for ephemeral verification
+  - `{ account: Address; offset: number }` - Reference to proof data stored in a record account
+</ParamField>
+
+<ParamField path="contextState" type="ContextStateArgs" optional>
+  Optional context state configuration for storing the verified proof on-chain:
+  - `contextAccount: KeyPairSigner` - New account to store the proof
+  - `authority: Address` - Authority that can close the context account
+</ParamField>
+
+<ParamField path="programId" type="Address" optional>
+  ZK ElGamal Proof program address. Defaults to `ZK_ELGAMAL_PROOF_PROGRAM_ADDRESS`
+</ParamField>
+
+## Returns
+
+`Promise<Instruction[]>` - Array of instructions to execute:
+1. Create context account instruction (if `contextState` is provided)
+2. Verify grouped ciphertext validity proof instruction
+
+## Usage Examples
+
+### Verify 2-Handle Grouped Ciphertext
+
+Verify a ciphertext encrypted to two public keys:
+
+```typescript
+import { verifyGroupedCiphertext2HandlesValidity } from '@solana/zk-elgamal-proof';
+import {
+  ElGamalKeypair,
+  GroupedCiphertext2HandlesValidityProofData,
+} from '@solana/zk-sdk/node';
+
+// Create two keypairs (e.g., source and destination)
+const sourceKeypair = new ElGamalKeypair();
+const destKeypair = new ElGamalKeypair();
+
+const amount = 1000n;
+
+// Create grouped ciphertext with 2 handles
+const groupedCiphertext = sourceKeypair.pubkey().encryptU64With(
+  amount,
+  destKeypair.pubkey(),
+);
+
+// Generate validity proof
+const proof = new GroupedCiphertext2HandlesValidityProofData(
+  sourceKeypair.pubkey(),
+  destKeypair.pubkey(),
+  groupedCiphertext,
+  amount,
+);
+const proofData = proof.toBytes();
+
+// Verify ephemerally
+const ixs = await verifyGroupedCiphertext2HandlesValidity({
+  rpc: client.rpc,
+  payer,
+  proofData,
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+```
+
+### Verify 3-Handle Grouped Ciphertext
+
+Verify a ciphertext encrypted to three public keys:
+
+```typescript
+import { verifyGroupedCiphertext3HandlesValidity } from '@solana/zk-elgamal-proof';
+import {
+  ElGamalKeypair,
+  GroupedCiphertext3HandlesValidityProofData,
+} from '@solana/zk-sdk/node';
+
+// Create three keypairs (e.g., source, destination, and auditor)
+const sourceKeypair = new ElGamalKeypair();
+const destKeypair = new ElGamalKeypair();
+const auditorKeypair = new ElGamalKeypair();
+
+const amount = 2500n;
+
+// Create grouped ciphertext with 3 handles
+const groupedCiphertext = sourceKeypair.pubkey().encryptU64With3Handles(
+  amount,
+  destKeypair.pubkey(),
+  auditorKeypair.pubkey(),
+);
+
+// Generate validity proof
+const proof = new GroupedCiphertext3HandlesValidityProofData(
+  sourceKeypair.pubkey(),
+  destKeypair.pubkey(),
+  auditorKeypair.pubkey(),
+  groupedCiphertext,
+  amount,
+);
+const proofData = proof.toBytes();
+
+// Verify ephemerally
+const ixs = await verifyGroupedCiphertext3HandlesValidity({
+  rpc: client.rpc,
+  payer,
+  proofData,
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+```
+
+### With Context State Storage
+
+Store the verified proof on-chain:
+
+```typescript
+import { generateKeyPairSigner } from '@solana/kit';
+
+const contextAccount = await generateKeyPairSigner();
+
+const ixs = await verifyGroupedCiphertext2HandlesValidity({
+  rpc: client.rpc,
+  payer,
+  proofData,
+  contextState: {
+    contextAccount,
+    authority: payer.address,
+  },
+});
+
+await sendAndConfirmInstructions(client, payer, ixs);
+
+// Context account now stores the verified proof
+const account = await client.rpc
+  .getAccountInfo(contextAccount.address, { encoding: 'base64' })
+  .send();
+```
+
+## Notes
+
+<Note>
+  **Grouped Ciphertexts**
+  
+  A grouped ciphertext encrypts the same value to multiple public keys simultaneously. This allows different parties to independently decrypt the same encrypted value, which is essential for confidential multi-party transactions.
+</Note>
+
+<Note>
+  **Handle Count**
+  
+  - **2 handles**: Typically used for source and destination in transfers
+  - **3 handles**: Adds an auditor or third party that can also decrypt the value
+</Note>
+
+<Warning>
+  **Invalid Proof Data**
+  
+  If the proof data is invalid or the grouped ciphertext is malformed, the transaction will fail during execution.
+</Warning>
+
+## Use Cases
+
+- Verifying confidential transfer ciphertexts in token programs
+- Ensuring encrypted amounts are accessible to all required parties
+- Supporting auditable confidential transactions with multiple decryptors
+- Implementing multi-party confidential protocols
+
+## Related Functions
+
+- [`verifyBatchedGroupedCiphertext2HandlesValidity`](/javascript/actions/verify-batched-grouped-ciphertext-validity) - Verify multiple 2-handle grouped ciphertexts
+- [`verifyBatchedGroupedCiphertext3HandlesValidity`](/javascript/actions/verify-batched-grouped-ciphertext-validity) - Verify multiple 3-handle grouped ciphertexts
+- [`closeContextStateProof`](/javascript/actions/close-context) - Close a context state account

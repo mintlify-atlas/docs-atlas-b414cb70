@@ -103,9 +103,13 @@
             "group": "Actions",
             "pages": [
               "javascript/actions/verify-zero-ciphertext",
-              "javascript/actions/verify-ciphertext-equality",
+              "javascript/actions/verify-ciphertext-ciphertext-equality",
+              "javascript/actions/verify-ciphertext-commitment-equality",
               "javascript/actions/verify-pubkey-validity",
+              "javascript/actions/verify-grouped-ciphertext-validity",
+              "javascript/actions/verify-batched-grouped-ciphertext-validity",
               "javascript/actions/verify-range-proofs",
+              "javascript/actions/verify-percentage-with-cap",
               "javascript/actions/close-context"
             ]
           }

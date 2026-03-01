@@ -144,7 +144,7 @@ await sendAndConfirmInstructions(client, payer, closeIxs);
 Context state accounts can be created by various verification functions:
 
 - [`verifyZeroCiphertext`](/javascript/actions/verify-zero-ciphertext)
-- [`verifyCiphertextCiphertextEquality`](/javascript/actions/verify-ciphertext-equality)
+- [`verifyCiphertextCiphertextEquality`](/javascript/actions/verify-ciphertext-ciphertext-equality)
 - [`verifyPubkeyValidity`](/javascript/actions/verify-pubkey-validity)
 - [`verifyBatchedRangeProofU64/U128/U256`](/javascript/actions/verify-range-proofs)
 
@@ -153,5 +153,5 @@ All context state accounts created by these functions can be closed using `close
 ## Related Functions
 
 - [`verifyZeroCiphertext`](/javascript/actions/verify-zero-ciphertext) - Create context state for zero-ciphertext proofs
-- [`verifyCiphertextCiphertextEquality`](/javascript/actions/verify-ciphertext-equality) - Create context state for equality proofs
+- [`verifyCiphertextCiphertextEquality`](/javascript/actions/verify-ciphertext-ciphertext-equality) - Create context state for equality proofs
 - [`verifyPubkeyValidity`](/javascript/actions/verify-pubkey-validity) - Create context state for public key validity proofs
